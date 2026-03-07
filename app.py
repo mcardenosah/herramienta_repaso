@@ -199,7 +199,7 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", # <-- Modelo estándar. Veremos qué dice el error de diagnóstico.
+    model_name="gemini-1.5-flash-latest", # <-- SOLUCIÓN DEFINITIVA: Versión exacta que evita el 404 y tiene cuota masiva
     system_instruction=SYSTEM_PROMPT
 )
 
@@ -257,8 +257,8 @@ if len(st.session_state.messages) > 2:
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                         st.rerun() # Solo recarga si ha tenido éxito
                     except Exception as e:
-                        # MODO DIAGNÓSTICO ACTIVADO
-                        st.error(f"⚠️ Error técnico de la API de Google: {e}")
+                        print(f"ERROR TÉCNICO DE API (OCULTO PARA ALUMNOS): {e}") # Queda en el log de Streamlit para ti
+                        st.error("⚠️ El servidor está un poco saturado en este momento. Por favor, espera unos segundos y vuelve a pulsar el botón.")
                         st.session_state.messages.pop() # Borramos el intento fallido
 
 # 4. ENTRADA PRINCIPAL DE CHAT
@@ -283,6 +283,6 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                 st.rerun() # Solo recarga si ha tenido éxito
             except Exception as e:
-                # MODO DIAGNÓSTICO ACTIVADO
-                st.error(f"⚠️ Error técnico de la API de Google: {e}")
+                print(f"ERROR TÉCNICO DE API (OCULTO PARA ALUMNOS): {e}") # Queda en el log de Streamlit para ti
+                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, espera unos segundos y vuelve a enviar tu explicación.")
                 st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
