@@ -199,7 +199,7 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
+    model_name="gemini-1.5-flash", # <-- AQUÍ ESTÁ EL CAMBIO CLAVE A LA VERSIÓN SIN LÍMITES ESTRICTOS
     system_instruction=SYSTEM_PROMPT
 )
 
