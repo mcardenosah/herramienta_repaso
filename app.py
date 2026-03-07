@@ -257,7 +257,7 @@ if len(st.session_state.messages) > 2:
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                         st.rerun() # Solo recarga si ha tenido éxito
                     except Exception as e:
-                        st.error("⚠️ El servidor de la IA está saturado en este momento. Vuelve a pulsar el botón en unos segundos.")
+                        st.error(f"⚠️ Error técnico de la API de Google: {e}")
                         st.session_state.messages.pop() # Borramos el intento fallido
 
 # 4. ENTRADA PRINCIPAL DE CHAT
@@ -282,5 +282,5 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                 st.rerun() # Solo recarga si ha tenido éxito
             except Exception as e:
-                st.error("⚠️ Ha habido un microcorte con el servidor. Por favor, vuelve a enviar tu explicación.")
+                st.error(f"⚠️ Error técnico de la API de Google: {e}")
                 st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
