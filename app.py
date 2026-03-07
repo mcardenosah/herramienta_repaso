@@ -198,9 +198,8 @@ if not api_key:
     st.stop()
 
 genai.configure(api_key=api_key)
-# CAMBIO CLAVE: Versión estable para desarrolladores con cuota masiva y sin bloqueo regional
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash-latest", 
+    model_name="gemini-1.5-flash", # <-- Modelo estándar. Veremos qué dice el error de diagnóstico.
     system_instruction=SYSTEM_PROMPT
 )
 
@@ -258,8 +257,8 @@ if len(st.session_state.messages) > 2:
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                         st.rerun() # Solo recarga si ha tenido éxito
                     except Exception as e:
-                        # Error amigable para el aula
-                        st.error("⚠️ El servidor está un poco saturado. Por favor, espera unos segundos y vuelve a pulsar el botón de Terminar.")
+                        # MODO DIAGNÓSTICO ACTIVADO
+                        st.error(f"⚠️ Error técnico de la API de Google: {e}")
                         st.session_state.messages.pop() # Borramos el intento fallido
 
 # 4. ENTRADA PRINCIPAL DE CHAT
@@ -284,6 +283,6 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                 st.rerun() # Solo recarga si ha tenido éxito
             except Exception as e:
-                # Error amigable para el aula
-                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, espera unos segundos y vuelve a enviar tu explicación.")
+                # MODO DIAGNÓSTICO ACTIVADO
+                st.error(f"⚠️ Error técnico de la API de Google: {e}")
                 st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
