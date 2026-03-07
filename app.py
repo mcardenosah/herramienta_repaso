@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES DE ARCHIVOS
 # ==========================================
 def extract_text_from_pdf(filepath):
     """Extrae el texto de un archivo PDF dado su ruta."""
@@ -30,31 +30,45 @@ def extract_text_from_pdf(filepath):
     except Exception as e:
         return f"Error al leer el PDF: {e}"
 
-def get_available_pdfs(directory="apuntes"):
-    """Lee la carpeta 'apuntes' y devuelve la lista de PDFs disponibles."""
+def get_asignaturas(directory="apuntes"):
+    """Lee la carpeta raíz y devuelve las subcarpetas (Asignaturas)."""
     if not os.path.exists(directory):
-        os.makedirs(directory) # Crea la carpeta si no existe para evitar errores
+        os.makedirs(directory) # Crea la carpeta si no existe
         return []
-    pdfs = [f for f in os.listdir(directory) if f.endswith('.pdf')]
+    # Filtra para obtener solo directorios (carpetas)
+    asignaturas = [d for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))]
+    return sorted(asignaturas)
+
+def get_temas(asignatura, directory="apuntes"):
+    """Devuelve los PDFs dentro de la carpeta de la asignatura seleccionada."""
+    path = os.path.join(directory, asignatura)
+    if not os.path.exists(path):
+        return []
+    pdfs = [f for f in os.listdir(path) if f.endswith('.pdf')]
     return sorted(pdfs)
 
-def init_chat_history(tema):
-    """Inicializa el historial. Si el tema cambia, se resetea."""
-    if "current_tema" not in st.session_state or st.session_state.current_tema != tema:
+# ==========================================
+# GESTIÓN DEL HISTORIAL DE CHAT
+# ==========================================
+def init_chat_history(asignatura, tema):
+    """Inicializa el historial. Si cambian de asignatura o tema, se resetea."""
+    tema_id = f"{asignatura}_{tema}" # Identificador único de la sesión
+    
+    if "current_tema_id" not in st.session_state or st.session_state.current_tema_id != tema_id:
         st.session_state.messages = []
-        st.session_state.current_tema = tema
+        st.session_state.current_tema_id = tema_id
     
     if len(st.session_state.messages) == 0:
-        # MEJORA 1: Mensaje "oculto" del usuario para cumplir con las reglas de la API de Gemini
+        # Mensaje técnico oculto para cumplir reglas de la API de Gemini
         st.session_state.messages.append({
             "role": "user", 
-            "content": f"Iniciamos la sesión de estudio sobre {tema.replace('.pdf', '')}. Puedes hacer tu primera intervención como estudiante.",
-            "show": False # Bandera para no mostrarlo en la interfaz
+            "content": f"Iniciamos la sesión de estudio de {asignatura.replace('_', ' ')}, tema: {tema.replace('.pdf', '')}. Puedes hacer tu primera intervención como estudiante.",
+            "show": False 
         })
-        # Mensaje de bienvenida inicial (Starter prompt)
+        # Mensaje de bienvenida visible (Starter prompt DUA)
         st.session_state.messages.append({
             "role": "model", 
-            "content": f"¡Hola! Ya he sacado los apuntes de **{tema.replace('.pdf', '')}**. ¿Por qué concepto empezamos hoy?",
+            "content": f"¡Hola! Ya he sacado los apuntes de **{tema.replace('.pdf', '').replace('_', ' ')}**. ¿Por qué concepto empezamos hoy?",
             "show": True
         })
 
@@ -67,20 +81,33 @@ except:
     api_key = st.sidebar.text_input("🔑 API Key de Gemini (Falta configurar st.secrets)", type="password")
 
 # ==========================================
-# PANEL LATERAL (MENÚ DEL ALUMNADO)
+# PANEL LATERAL (MENÚ EN CASCADA)
 # ==========================================
 with st.sidebar:
     st.header("📚 Menú de Estudio")
-    st.markdown("Selecciona las opciones para comenzar la sesión.")
+    st.markdown("Selecciona tu grupo y el tema de hoy.")
     
-    pdf_files = get_available_pdfs("apuntes")
+    # PASO 1: Elegir Asignatura (Carpeta)
+    asignaturas = get_asignaturas("apuntes")
     
-    if not pdf_files:
-        st.error("⚠️ Docente: No hay archivos en la carpeta 'apuntes'. Sube tus PDFs a GitHub.")
+    if not asignaturas:
+        st.error("⚠️ Docente: Crea subcarpetas dentro de 'apuntes' en GitHub (ej: 'apuntes/Biologia').")
         st.stop()
         
-    tema_seleccionado = st.selectbox("1. Elige el tema a repasar:", pdf_files, format_func=lambda x: x.replace(".pdf", "").replace("_", " "))
-    nivel_educativo = st.selectbox("2. Tu nivel educativo:", ["3º ESO", "4º ESO", "1º Bachillerato", "FP Básica"])
+    asignatura_seleccionada = st.selectbox("1. Tu Asignatura / Grupo:", asignaturas, format_func=lambda x: x.replace("_", " "))
+    
+    # PASO 2: Elegir Tema (PDFs dentro de la carpeta elegida)
+    temas = get_temas(asignatura_seleccionada)
+    
+    if not temas:
+        st.warning(f"⚠️ No hay PDFs subidos en la carpeta de {asignatura_seleccionada.replace('_', ' ')}.")
+        st.stop()
+        
+    tema_seleccionado = st.selectbox("2. Tema a repasar:", temas, format_func=lambda x: x.replace(".pdf", "").replace("_", " "))
+    
+    st.divider()
+    
+    # PASO 3: Variables de configuración del simulador
     idioma = st.selectbox("3. Idioma:", ["Castellano", "Valenciano"])
     nivel_desafio = st.select_slider("4. Nivel de dificultad de las dudas:", options=["Básico", "Intermedio", "Avanzado"], value="Intermedio")
     
@@ -92,21 +119,20 @@ with st.sidebar:
 # ==========================================
 # EXTRACCIÓN DEL CONTEXTO Y PROMPT MAESTRO
 # ==========================================
-ruta_pdf = os.path.join("apuntes", tema_seleccionado)
+# Ruta dinámica basada en las dos selecciones
+ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
 contexto_texto = extract_text_from_pdf(ruta_pdf)
 
-# MEJORA 2: Advertencia pedagógica si el PDF es ilegible (ej. escaneado como imagen)
 if not contexto_texto.strip():
-    st.warning("⚠️ Atención: El PDF seleccionado parece no contener texto legible (podría ser una imagen escaneada). El simulador no podrá basar sus dudas en el temario.")
+    st.warning("⚠️ Atención: El PDF seleccionado parece no contener texto legible (imagen escaneada).")
 
-# MEJORA 3: Concatenación segura del texto para evitar cuelgues por formato (f-strings)
 SYSTEM_PROMPT = f"""
 OBJETIVO PRINCIPAL:
 Eres un simulador de estudiante diseñado para que el usuario (el alumnado) aprenda explicándote conceptos teóricos (Efecto Protegé). Eres curioso, te esfuerzas por entender, pero tienes dudas y cometes errores conceptuales verosímiles que el usuario debe corregir argumentando con rigor científico.
 
 VARIABLES DE CONFIGURACIÓN:
-- Tema de estudio: {tema_seleccionado.replace('.pdf', '')}
-- Nivel educativo del usuario: {nivel_educativo}
+- Asignatura/Materia: {asignatura_seleccionada.replace('_', ' ')}
+- Tema de estudio: {tema_seleccionado.replace('.pdf', '').replace('_', ' ')}
 - Nivel de desafío cognitivo de tus errores: {nivel_desafio}
 - Idioma de interacción: {idioma}
 
@@ -164,7 +190,7 @@ Paso 3: Despedida pidiendo que copie la rúbrica y la suba al aula virtual (Aule
 # INTERFAZ DE CHAT (ALUMNADO)
 # ==========================================
 st.title("🌱 Simulador: Tu alumno virtual")
-st.caption(f"Actualmente repasando: **{tema_seleccionado.replace('.pdf', '')}**")
+st.caption(f"Actualmente repasando: **{asignatura_seleccionada.replace('_', ' ')} ➔ {tema_seleccionado.replace('.pdf', '').replace('_', ' ')}**")
 
 if not api_key:
     st.stop()
@@ -175,15 +201,13 @@ model = genai.GenerativeModel(
     system_instruction=SYSTEM_PROMPT
 )
 
-init_chat_history(tema_seleccionado)
+init_chat_history(asignatura_seleccionada, tema_seleccionado)
 
-# Mostrar historial de mensajes (ocultando el mensaje técnico del usuario)
 for msg in st.session_state.messages:
     if msg.get("show", True):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "model" else "🧑‍🏫"):
             st.markdown(msg["content"])
 
-# Andamiaje UI: Botón para terminar
 col1, col2 = st.columns([1, 4])
 with col1:
     if st.button("🏁 Terminar y Evaluar", help="Pasa a la rúbrica final"):
@@ -200,7 +224,6 @@ with col1:
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
         st.rerun()
 
-# Entrada de chat principal
 if prompt := st.chat_input("Escribe tu explicación aquí..."):
     st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
     with st.chat_message("user", avatar="🧑‍🏫"):
