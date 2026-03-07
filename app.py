@@ -199,7 +199,7 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash", # <-- AQUÍ ESTÁ EL CAMBIO CLAVE A LA VERSIÓN SIN LÍMITES ESTRICTOS
+    model_name="gemini-2.5-flash", # <-- VOLVEMOS AL MODELO ORIGINAL QUE SÍ RECONOCE TU CUENTA
     system_instruction=SYSTEM_PROMPT
 )
 
@@ -257,7 +257,7 @@ if len(st.session_state.messages) > 2:
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                         st.rerun() # Solo recarga si ha tenido éxito
                     except Exception as e:
-                        st.error(f"⚠️ Error técnico de la API de Google: {e}")
+                        st.error(f"⚠️ El servidor de la IA está saturado. Por favor, espera unos segundos y vuelve a pulsar el botón.")
                         st.session_state.messages.pop() # Borramos el intento fallido
 
 # 4. ENTRADA PRINCIPAL DE CHAT
@@ -282,5 +282,6 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                 st.rerun() # Solo recarga si ha tenido éxito
             except Exception as e:
-                st.error(f"⚠️ Error técnico de la API de Google: {e}")
+                # Modificamos el mensaje para que sea amigable en el aula
+                st.error(f"⚠️ ¡Vaya! Has ido más rápido de lo que el sistema puede procesar. Por favor, espera 20 segundos y vuelve a darle a Enter.")
                 st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
