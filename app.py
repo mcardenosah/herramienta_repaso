@@ -92,7 +92,7 @@ with st.sidebar:
     asignaturas = get_asignaturas("apuntes")
     
     if not asignaturas:
-        st.error("⚠️ Docente: Crea subcarpetas dentro de 'apuntes' en GitHub (ej: 'apuntes/Biologia').")
+        st.error("⚠️ Docente: Crea subcarpetas dentro de 'apuntes' en GitHub (ej: 'apuntes/Biologia_3_ESO').")
         st.stop()
         
     asignatura_seleccionada = st.selectbox("1. Tu Asignatura / Grupo:", asignaturas, format_func=lambda x: x.replace("_", " "))
@@ -250,11 +250,15 @@ if len(st.session_state.messages) > 2:
             
             with st.chat_message("model", avatar="🧑‍🎓"):
                 with st.spinner("Preparando evaluación..."):
-                    chat = model.start_chat(history=[{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]])
-                    response = chat.send_message(prompt_rapido)
-                    st.markdown(response.text)
-                    st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-            st.rerun()
+                    try:
+                        chat = model.start_chat(history=[{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]])
+                        response = chat.send_message(prompt_rapido)
+                        st.markdown(response.text)
+                        st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                        st.rerun() # Solo recarga si ha tenido éxito
+                    except Exception as e:
+                        st.error("⚠️ El servidor de la IA está saturado en este momento. Vuelve a pulsar el botón en unos segundos.")
+                        st.session_state.messages.pop() # Borramos el intento fallido
 
 # 4. ENTRADA PRINCIPAL DE CHAT
 if prompt := st.chat_input("Escribe tu explicación aquí..."):
@@ -276,8 +280,7 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                st.rerun() # Solo recarga si ha tenido éxito
             except Exception as e:
-                st.error(f"Error de conexión: {e}")
-            
-    # Forzar recarga para ocultar las opciones iniciales y mostrar el botón de Terminar
-    st.rerun()
+                st.error("⚠️ Ha habido un microcorte con el servidor. Por favor, vuelve a enviar tu explicación.")
+                st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
