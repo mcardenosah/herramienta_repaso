@@ -57,6 +57,7 @@ def init_chat_history(asignatura, tema):
     if "current_tema_id" not in st.session_state or st.session_state.current_tema_id != tema_id:
         st.session_state.messages = []
         st.session_state.current_tema_id = tema_id
+        st.session_state.mostrar_instrucciones = False # Reseteo de la vista de instrucciones
     
     if len(st.session_state.messages) == 0:
         # Mensaje técnico oculto para cumplir reglas de la API de Gemini
@@ -203,28 +204,60 @@ model = genai.GenerativeModel(
 
 init_chat_history(asignatura_seleccionada, tema_seleccionado)
 
+# 1. Mostrar historial de mensajes
 for msg in st.session_state.messages:
     if msg.get("show", True):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "model" else "🧑‍🏫"):
             st.markdown(msg["content"])
 
-col1, col2 = st.columns([1, 4])
-with col1:
-    if st.button("🏁 Terminar y Evaluar", help="Pasa a la rúbrica final"):
-        prompt_rapido = "/FIN_DIALOGO"
-        st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": True})
-        with st.chat_message("user", avatar="🧑‍🏫"):
-            st.markdown(prompt_rapido)
-        
-        with st.chat_message("model", avatar="🧑‍🎓"):
-            with st.spinner("Preparando evaluación..."):
-                chat = model.start_chat(history=[{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]])
-                response = chat.send_message(prompt_rapido)
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-        st.rerun()
+# 2. BOTONES DE INICIO (Solo visibles al arrancar la sesión, DUA)
+# Si hay exactamente 2 mensajes (el oculto y el saludo inicial), mostramos las opciones.
+if len(st.session_state.messages) == 2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_btn1, col_btn2 = st.columns(2)
+    
+    with col_btn1:
+        if st.button("📖 ¿Cómo funciona esta actividad?", use_container_width=True):
+            st.session_state.mostrar_instrucciones = True
+            
+    with col_btn2:
+        if st.button("🚀 Empezar directamente a explicar", type="primary", use_container_width=True):
+            st.session_state.mostrar_instrucciones = False
 
+    # Mostrar la caja de instrucciones si pulsan el primer botón
+    if st.session_state.get("mostrar_instrucciones", False):
+        st.info("""
+        **Instrucciones del Simulador (Efecto Protegé):**
+        1. **Cambio de roles:** Aquí tú eres el/la docente y el simulador es tu estudiante.
+        2. **Tu objetivo:** Tienes que conseguir que el estudiante entienda el concepto. Él te hará preguntas y a veces se equivocará a propósito basándose en el temario.
+        3. **Cómo interactuar:** Usa la caja de texto de abajo para explicar, poner ejemplos y corregir sus fallos. ¡No le des la respuesta directa, hazle pensar!
+        4. **Finalizar y Evaluar:** Cuando consideres que la sesión ha terminado, pulsa el botón **'🏁 Terminar y Evaluar'** para generar tu nota y resumen.
+        
+        *Escribe tu primer mensaje en la caja de abajo cuando estés listo/a.*
+        """)
+
+# 3. BOTÓN DE TERMINAR (Oculto al inicio para evitar confusiones)
+# Solo aparece si el usuario ya ha interactuado al menos una vez (len > 2)
+if len(st.session_state.messages) > 2:
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🏁 Terminar y Evaluar", help="Pasa a la rúbrica final"):
+            prompt_rapido = "/FIN_DIALOGO"
+            st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": True})
+            with st.chat_message("user", avatar="🧑‍🏫"):
+                st.markdown(prompt_rapido)
+            
+            with st.chat_message("model", avatar="🧑‍🎓"):
+                with st.spinner("Preparando evaluación..."):
+                    chat = model.start_chat(history=[{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]])
+                    response = chat.send_message(prompt_rapido)
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+            st.rerun()
+
+# 4. ENTRADA PRINCIPAL DE CHAT
 if prompt := st.chat_input("Escribe tu explicación aquí..."):
+    # Al escribir, la interfaz se limpia automáticamente de los botones iniciales
     st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
     with st.chat_message("user", avatar="🧑‍🏫"):
         st.markdown(prompt)
@@ -244,3 +277,6 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
             except Exception as e:
                 st.error(f"Error de conexión: {e}")
+            
+    # Forzar recarga para ocultar las opciones iniciales y mostrar el botón de Terminar
+    st.rerun()
