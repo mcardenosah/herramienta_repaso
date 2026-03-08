@@ -1,6 +1,7 @@
 import os
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import PyPDF2
 
 # ==========================================
@@ -197,11 +198,8 @@ st.caption(f"Actualmente repasando: **{asignatura_seleccionada.replace('_', ' ')
 if not api_key:
     st.stop()
 
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash-latest", # <-- SOLUCIÓN DEFINITIVA: Versión exacta que evita el 404 y tiene cuota masiva
-    system_instruction=SYSTEM_PROMPT
-)
+# INSTANCIACIÓN DEL NUEVO CLIENTE (Librería google-genai oficial)
+client = genai.Client(api_key=api_key)
 
 init_chat_history(asignatura_seleccionada, tema_seleccionado)
 
@@ -212,7 +210,6 @@ for msg in st.session_state.messages:
             st.markdown(msg["content"])
 
 # 2. BOTONES DE INICIO (Solo visibles al arrancar la sesión, DUA)
-# Si hay exactamente 2 mensajes (el oculto y el saludo inicial), mostramos las opciones.
 if len(st.session_state.messages) == 2:
     st.markdown("<br>", unsafe_allow_html=True)
     col_btn1, col_btn2 = st.columns(2)
@@ -225,7 +222,6 @@ if len(st.session_state.messages) == 2:
         if st.button("🚀 Empezar directamente a explicar", type="primary", use_container_width=True):
             st.session_state.mostrar_instrucciones = False
 
-    # Mostrar la caja de instrucciones si pulsan el primer botón
     if st.session_state.get("mostrar_instrucciones", False):
         st.info("""
         **Instrucciones del Simulador (Efecto Protegé):**
@@ -238,7 +234,6 @@ if len(st.session_state.messages) == 2:
         """)
 
 # 3. BOTÓN DE TERMINAR (Oculto al inicio para evitar confusiones)
-# Solo aparece si el usuario ya ha interactuado al menos una vez (len > 2)
 if len(st.session_state.messages) > 2:
     col1, col2 = st.columns([1, 4])
     with col1:
@@ -251,15 +246,26 @@ if len(st.session_state.messages) > 2:
             with st.chat_message("model", avatar="🧑‍🎓"):
                 with st.spinner("Preparando evaluación..."):
                     try:
-                        chat = model.start_chat(history=[{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]])
+                        # Adaptación estricta al nuevo formato de historial y roles
+                        formatted_history = [
+                            types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
+                            for m in st.session_state.messages[:-1]
+                        ]
+                        
+                        chat = client.chats.create(
+                            model="gemini-2.5-flash",
+                            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                            history=formatted_history
+                        )
                         response = chat.send_message(prompt_rapido)
+                        
                         st.markdown(response.text)
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                        st.rerun() # Solo recarga si ha tenido éxito
+                        st.rerun() 
                     except Exception as e:
-                        print(f"ERROR TÉCNICO DE API (OCULTO PARA ALUMNOS): {e}") # Queda en el log de Streamlit para ti
-                        st.error("⚠️ El servidor está un poco saturado en este momento. Por favor, espera unos segundos y vuelve a pulsar el botón.")
-                        st.session_state.messages.pop() # Borramos el intento fallido
+                        print(f"ERROR TÉCNICO DE API: {e}") 
+                        st.error("⚠️ El servidor está un poco saturado. Por favor, espera unos segundos y vuelve a pulsar el botón.")
+                        st.session_state.messages.pop() 
 
 # 4. ENTRADA PRINCIPAL DE CHAT
 if prompt := st.chat_input("Escribe tu explicación aquí..."):
@@ -271,18 +277,23 @@ if prompt := st.chat_input("Escribe tu explicación aquí..."):
     with st.chat_message("model", avatar="🧑‍🎓"):
         with st.spinner("Pensando..."):
             try:
-                formatted_history = []
-                for m in st.session_state.messages[:-1]:
-                    role = "user" if m["role"] == "user" else "model"
-                    formatted_history.append({"role": role, "parts": [m["content"]]})
+                # Adaptación estricta al nuevo formato de historial y roles
+                formatted_history = [
+                    types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
+                    for m in st.session_state.messages[:-1]
+                ]
                 
-                chat = model.start_chat(history=formatted_history)
+                chat = client.chats.create(
+                    model="gemini-2.5-flash",
+                    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                    history=formatted_history
+                )
                 response = chat.send_message(prompt)
                 
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                st.rerun() # Solo recarga si ha tenido éxito
+                st.rerun() 
             except Exception as e:
-                print(f"ERROR TÉCNICO DE API (OCULTO PARA ALUMNOS): {e}") # Queda en el log de Streamlit para ti
-                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, espera unos segundos y vuelve a enviar tu explicación.")
-                st.session_state.messages.pop() # Borramos el mensaje para no corromper el turno de la IA
+                print(f"ERROR TÉCNICO DE API: {e}") 
+                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, vuelve a enviar tu explicación.")
+                st.session_state.messages.pop()
