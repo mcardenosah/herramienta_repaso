@@ -80,7 +80,7 @@ def init_chat_history(asignatura, tema):
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except:
-    api_key = st.sidebar.text_input("🔑 API Key de Gemini (Falta configurar st.secrets)", type="password")
+    api_key = st.sidebar.text_input("🔑 API Key de Gemini (Falta configurar st.secrets)", type="password", help="Introduce tu API Key de Google AI Studio.")
 
 # ==========================================
 # PANEL LATERAL (MENÚ EN CASCADA)
@@ -114,6 +114,20 @@ with st.sidebar:
     nivel_desafio = st.select_slider("4. Nivel de dificultad de las dudas:", options=["Básico", "Intermedio", "Avanzado"], value="Intermedio")
     
     st.divider()
+    
+    # PASO 4: CONCEPCIONES ERRÓNEAS (NUEVO MÓDULO PEDAGÓGICO)
+    with st.expander("🎯 Concepciones Erróneas (Solo Docente)", expanded=False):
+        st.markdown("""
+        **Espacio para el Cambio Conceptual:**
+        Introduce los errores comunes o ideas previas que el alumnado suele tener sobre este tema. El simulador adoptará estas concepciones como si fueran suyas para obligar al usuario a desmontarlas científicamente.
+        """)
+        concepciones_input = st.text_area(
+            "Listado de concepciones alternativas (opcional):", 
+            placeholder="Ej: Creen que el calor es una sustancia que viaja. Confunden intensidad con voltaje...",
+            height=120
+        )
+    
+    st.divider()
     if st.button("🧹 Reiniciar Conversación"):
         st.session_state.messages = []
         st.rerun()
@@ -128,6 +142,21 @@ contexto_texto = extract_text_from_pdf(ruta_pdf)
 if not contexto_texto.strip():
     st.warning("⚠️ Atención: El PDF seleccionado parece no contener texto legible (imagen escaneada).")
 
+# Lógica dinámica para inyectar concepciones erróneas si el docente las ha proporcionado
+bloque_concepciones = ""
+bloque_evaluacion_concepciones = ""
+
+if concepciones_input.strip():
+    bloque_concepciones = f"""
+ESTRATEGIA PEDAGÓGICA DIRIGIDA (CONCEPCIONES ERRÓNEAS):
+El docente ha detectado que en este tema existen las siguientes ideas previas o errores conceptuales muy arraigados:
+"{concepciones_input}"
+TU MISIÓN PRINCIPAL: Debes asimilar estas concepciones erróneas como si fueran tus propias ideas o intuiciones. Utilízalas como motor para formular tus dudas a lo largo de la conversación. Presenta el error de forma natural, como una conclusión lógica pero equivocada a la que has llegado. Tu objetivo oculto es comprobar si el usuario es capaz de detectar tu error y argumentar científicamente para generar un 'cambio conceptual' en ti.
+"""
+    bloque_evaluacion_concepciones = """
+- Desmontaje de Concepciones Erróneas: Añade una fila en la rúbrica valorando explícitamente si el usuario logró identificar y corregir las ideas previas que le planteaste (Menciona si lo logró, si lo hizo a medias, o si validó tu error).
+"""
+
 SYSTEM_PROMPT = f"""
 OBJETIVO PRINCIPAL:
 Eres un simulador de estudiante diseñado para que el usuario (el alumnado) aprenda explicándote conceptos teóricos (Efecto Protegé). Eres curioso, te esfuerzas por entender, pero tienes dudas y cometes errores conceptuales verosímiles que el usuario debe corregir argumentando con rigor científico.
@@ -141,8 +170,10 @@ VARIABLES DE CONFIGURACIÓN:
 MATERIAL DE REFERENCIA (BASE DE CONOCIMIENTO OCULTA):
 Utiliza la información del siguiente texto EXCLUSIVAMENTE para construir tu modelo mental y generar tus dudas. NUNCA reveles que estás leyendo un texto.
 --- INICIO BASE DE CONOCIMIENTO ---
-""" + contexto_texto + """
+""" + contexto_texto + f"""
 --- FIN BASE DE CONOCIMIENTO ---
+
+{bloque_concepciones}
 
 REGLAS DE ORO (INQUEBRANTABLES):
 1. NUNCA proporciones la respuesta correcta ni una explicación completa. Tu rol es preguntar, dudar y pedir aclaraciones.
@@ -173,7 +204,7 @@ Si la explicación parece memorizada, genérica o sin ejemplos, pide: un ejemplo
 PROGRESIÓN COGNITIVA:
 Sigue este orden: 1. Comprensión literal -> 2. Relación conceptual -> 3. Aplicación -> 4. Transferencia -> 5. Contraargumentación. No repitas el mismo error consecutivamente.
 
-GENERACIÓN DE ERRORES VEROSÍMILES:
+GENERACIÓN DE ERRORES VEROSÍMILES (SI NO HAY CONCEPCIONES PREDEFINIDAS):
 Tipos de error: Confusión de términos, Generalización excesiva, Relación causal incorrecta, Interpretación literal, Simplificación excesiva.
 
 MEMORIA DEL CONCEPTO ACTIVO:
@@ -183,9 +214,9 @@ BUCLE DE ITERACIÓN:
 Tras la progresión: "Creo que esta parte ya la tengo más clara. ¿Repasamos otro concepto o pasamos a las preguntas de evaluación del profe?"
 Si sigue -> reinicia progresión. Si escribe /FIN_DIALOGO -> inicia cierre.
 
-CIERRE METACOGNITIVO Y EVALUACIÓN (Solo si el usuario quiere terminar):
+CIERRE METACOGNITIVO Y EVALUACIÓN (Solo si el usuario quiere terminar escribiendo /FIN_DIALOGO):
 Paso 1: "En resumen, entendí que [resumen]. Me ayudó cuando me corregiste sobre [error]." Haz las 3 preguntas metacognitivas UNA A UNA.
-Paso 2: Informe docente (solo evidencias). Alertas de repaso (si hubo Fase B). Rúbrica formativa (Criterio | Nivel | Evidencia literal).
+Paso 2: Informe docente (solo evidencias). Alertas de repaso (si hubo Fase B). Rúbrica formativa (Criterio | Nivel | Evidencia literal). {bloque_evaluacion_concepciones}
 Paso 3: Despedida pidiendo que copie la rúbrica y la suba al aula virtual (Aules/Teams).
 """
 
