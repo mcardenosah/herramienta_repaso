@@ -31,6 +31,21 @@ def extract_text_from_pdf(filepath):
     except Exception as e:
         return f"Error al leer el PDF: {e}"
 
+def get_concepciones_erroneas(pdf_filepath):
+    """
+    Busca de forma invisible un archivo .txt con el sufijo '_errores.txt'
+    que coincida con el nombre del PDF para inyectar la pedagogía oculta.
+    """
+    txt_filepath = pdf_filepath.replace('.pdf', '_errores.txt')
+    if os.path.exists(txt_filepath):
+        try:
+            with open(txt_filepath, 'r', encoding='utf-8') as file:
+                return file.read().strip()
+        except Exception as e:
+            print(f"Error al leer el archivo de concepciones: {e}")
+            return ""
+    return ""
+
 def get_asignaturas(directory="apuntes"):
     """Lee la carpeta raíz y devuelve las subcarpetas (Asignaturas)."""
     if not os.path.exists(directory):
@@ -115,19 +130,6 @@ with st.sidebar:
     
     st.divider()
     
-    # PASO 4: CONCEPCIONES ERRÓNEAS (NUEVO MÓDULO PEDAGÓGICO)
-    with st.expander("🎯 Concepciones Erróneas (Solo Docente)", expanded=False):
-        st.markdown("""
-        **Espacio para el Cambio Conceptual:**
-        Introduce los errores comunes o ideas previas que el alumnado suele tener sobre este tema. El simulador adoptará estas concepciones como si fueran suyas para obligar al usuario a desmontarlas científicamente.
-        """)
-        concepciones_input = st.text_area(
-            "Listado de concepciones alternativas (opcional):", 
-            placeholder="Ej: Creen que el calor es una sustancia que viaja. Confunden intensidad con voltaje...",
-            height=120
-        )
-    
-    st.divider()
     if st.button("🧹 Reiniciar Conversación"):
         st.session_state.messages = []
         st.rerun()
@@ -139,18 +141,21 @@ with st.sidebar:
 ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
 contexto_texto = extract_text_from_pdf(ruta_pdf)
 
+# Extracción invisible de concepciones erróneas (Backend)
+concepciones_ocultas = get_concepciones_erroneas(ruta_pdf)
+
 if not contexto_texto.strip():
     st.warning("⚠️ Atención: El PDF seleccionado parece no contener texto legible (imagen escaneada).")
 
-# Lógica dinámica para inyectar concepciones erróneas si el docente las ha proporcionado
+# Lógica dinámica para inyectar concepciones erróneas si el docente ha subido el archivo _errores.txt
 bloque_concepciones = ""
 bloque_evaluacion_concepciones = ""
 
-if concepciones_input.strip():
+if concepciones_ocultas.strip():
     bloque_concepciones = f"""
 ESTRATEGIA PEDAGÓGICA DIRIGIDA (CONCEPCIONES ERRÓNEAS):
 El docente ha detectado que en este tema existen las siguientes ideas previas o errores conceptuales muy arraigados:
-"{concepciones_input}"
+"{concepciones_ocultas}"
 TU MISIÓN PRINCIPAL: Debes asimilar estas concepciones erróneas como si fueran tus propias ideas o intuiciones. Utilízalas como motor para formular tus dudas a lo largo de la conversación. Presenta el error de forma natural, como una conclusión lógica pero equivocada a la que has llegado. Tu objetivo oculto es comprobar si el usuario es capaz de detectar tu error y argumentar científicamente para generar un 'cambio conceptual' en ti.
 """
     bloque_evaluacion_concepciones = """
@@ -199,7 +204,7 @@ Fase A — Conflicto cognitivo: Si detectas un error conceptual: "Espera, me est
 Fase B — Límite de persistencia: Si el usuario insiste en el error: "Uf, sigo sin verlo claro. Como no quiero liarme más, ¿lo dejamos marcado con un asterisco para revisarlo luego con el profe y seguimos con otro concepto?" (Memoriza este evento para las alertas de repaso).
 
 VERIFICACIÓN DE COMPRENSIÓN REAL:
-Si la explicación parece memorizada, genérica o sin ejemplos, pide: un ejemplo inventado, una analogía, o explicar qué ocurre si cambia una variable. No avances hasta que el usuario reformule con sus propias palabras.
+Si la explanation parece memorizada, genérica o sin ejemplos, pide: un ejemplo inventado, una analogía, o explicar qué ocurre si cambia una variable. No avances hasta que el usuario reformule con sus propias palabras.
 
 PROGRESIÓN COGNITIVA:
 Sigue este orden: 1. Comprensión literal -> 2. Relación conceptual -> 3. Aplicación -> 4. Transferencia -> 5. Contraargumentación. No repitas el mismo error consecutivamente.
