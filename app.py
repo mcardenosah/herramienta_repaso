@@ -3,6 +3,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 import PyPDF2
+import datetime
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -223,7 +224,7 @@ CIERRE METACOGNITIVO Y EVALUACIÓN (Solo si el usuario quiere terminar escribien
 Paso 1: "En resumen, entendí que [resumen]. Me ayudó cuando me corregiste sobre [error]." Haz las 3 preguntas metacognitivas UNA A UNA.
 Paso 2: Rúbrica formativa (Criterio | Nivel de Logro | Evidencia literal). {bloque_evaluacion_concepciones}
 REGLA ESTRICTA PARA LA RÚBRICA: La columna "Evidencia literal" DEBE contener ÚNICAMENTE frases exactas (entre comillas) escritas por el USUARIO (el que actúa de profesor) durante la conversación. ESTÁ TOTALMENTE PROHIBIDO que te cites a ti mismo (al estudiante). Si el usuario no aportó evidencia para un criterio, escribe "Sin evidencia en la conversación".
-Paso 3: Despedida pidiendo que copie la rúbrica y la suba al aula virtual (Aules/Teams).
+Paso 3: Despedida (sin pedir captura de pantalla, ya que ahora hay botón de descarga).
 """
 
 # ==========================================
@@ -239,6 +240,9 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 init_chat_history(asignatura_seleccionada, tema_seleccionado)
+
+# Variable de control para saber si la evaluación ha terminado
+dialogo_terminado = len(st.session_state.messages) > 2 and st.session_state.messages[-1].get("role") == "model" and st.session_state.messages[-2].get("content") == "/FIN_DIALOGO"
 
 # 1. Mostrar historial de mensajes
 for msg in st.session_state.messages:
@@ -266,12 +270,10 @@ if len(st.session_state.messages) == 2:
         2. **Tu objetivo:** Tienes que conseguir que el estudiante entienda el concepto. Él te hará preguntas y a veces se equivocará a propósito.
         3. **Cómo interactuar:** Usa la caja de texto de abajo para explicar, poner ejemplos y corregir sus fallos. ¡No le des la respuesta directa, hazle pensar!
         4. **Finalizar y Evaluar:** Cuando consideres que la sesión ha terminado, pulsa el botón **'🏁 Terminar y Evaluar'** para generar tu nota y resumen.
-        
-        *Escribe tu primer mensaje en la caja de abajo cuando estés listo/a.*
         """)
 
-# 3. BOTÓN DE TERMINAR (Oculto al inicio para evitar confusiones)
-if len(st.session_state.messages) > 2:
+# 3. BOTÓN DE TERMINAR (Desaparece si ya se ha evaluado)
+if len(st.session_state.messages) > 2 and not dialogo_terminado and not st.session_state.messages[-1].get("content") == "/FIN_DIALOGO":
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("🏁 Terminar y Evaluar", help="Pasa a la rúbrica final"):
@@ -283,7 +285,6 @@ if len(st.session_state.messages) > 2:
             with st.chat_message("model", avatar="🧑‍🎓"):
                 with st.spinner("Preparando evaluación..."):
                     try:
-                        # Adaptación estricta al nuevo formato de historial y roles
                         formatted_history = [
                             types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
                             for m in st.session_state.messages[:-1]
@@ -304,33 +305,55 @@ if len(st.session_state.messages) > 2:
                         st.error("⚠️ El servidor está un poco saturado. Por favor, espera unos segundos y vuelve a pulsar el botón.")
                         st.session_state.messages.pop() 
 
-# 4. ENTRADA PRINCIPAL DE CHAT
-if prompt := st.chat_input("Escribe tu explicación aquí..."):
-    # Al escribir, la interfaz se limpia automáticamente de los botones iniciales
-    st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
-    with st.chat_message("user", avatar="🧑‍🏫"):
-        st.markdown(prompt)
+# 4. BOTÓN DE DESCARGA (Solo aparece cuando la evaluación ha finalizado)
+if dialogo_terminado:
+    st.success("🎉 Evaluación completada. Descarga la rúbrica para entregarla en el aula virtual.")
+    
+    ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    texto_rubrica = st.session_state.messages[-1]["content"]
+    
+    documento_final = f"INFORME DE EVALUACIÓN - SIMULADOR EFECTO PROTEGÉ\n"
+    documento_final += f"==================================================\n"
+    documento_final += f"Fecha y hora de finalización: {ahora}\n"
+    documento_final += f"Asignatura/Grupo: {asignatura_seleccionada.replace('_', ' ')}\n"
+    documento_final += f"Tema evaluado: {tema_seleccionado.replace('.pdf', '')}\n"
+    documento_final += f"==================================================\n\n"
+    documento_final += texto_rubrica
+    
+    st.download_button(
+        label="📥 Descargar rúbrica",
+        data=documento_final,
+        file_name=f"Rubrica_{tema_seleccionado.replace('.pdf', '')}_{datetime.datetime.now().strftime('%d%m%Y')}.md",
+        mime="text/markdown",
+        type="primary"
+    )
 
-    with st.chat_message("model", avatar="🧑‍🎓"):
-        with st.spinner("Pensando..."):
-            try:
-                # Adaptación estricta al nuevo formato de historial y roles
-                formatted_history = [
-                    types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
-                    for m in st.session_state.messages[:-1]
-                ]
-                
-                chat = client.chats.create(
-                    model="gemini-2.5-flash",
-                    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-                    history=formatted_history
-                )
-                response = chat.send_message(prompt)
-                
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                st.rerun() 
-            except Exception as e:
-                print(f"ERROR TÉCNICO DE API: {e}") 
-                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, vuelve a enviar tu explicación.")
-                st.session_state.messages.pop()
+# 5. ENTRADA PRINCIPAL DE CHAT (Se oculta al terminar la evaluación)
+if not dialogo_terminado:
+    if prompt := st.chat_input("Escribe tu explicación aquí..."):
+        st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
+        with st.chat_message("user", avatar="🧑‍🏫"):
+            st.markdown(prompt)
+
+        with st.chat_message("model", avatar="🧑‍🎓"):
+            with st.spinner("Pensando..."):
+                try:
+                    formatted_history = [
+                        types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
+                        for m in st.session_state.messages[:-1]
+                    ]
+                    
+                    chat = client.chats.create(
+                        model="gemini-2.5-flash",
+                        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
+                        history=formatted_history
+                    )
+                    response = chat.send_message(prompt)
+                    
+                    st.markdown(response.text)
+                    st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                    st.rerun() 
+                except Exception as e:
+                    print(f"ERROR TÉCNICO DE API: {e}") 
+                    st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, vuelve a enviar tu explicación.")
+                    st.session_state.messages.pop()
