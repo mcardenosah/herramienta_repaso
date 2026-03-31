@@ -107,7 +107,7 @@ except:
     api_key = st.sidebar.text_input("🔑 API Key de Gemini", type="password")
 
 # ==========================================
-# PANEL LATERAL
+# PANEL LATERAL Y CONTROLES DE SESIÓN
 # ==========================================
 with st.sidebar:
     st.header("📚 Menú de Estudio")
@@ -122,9 +122,19 @@ with st.sidebar:
     st.divider()
     idioma = st.selectbox("3. Idioma:", ["Castellano", "Valenciano"])
     nivel_desafio = st.select_slider("4. Dificultad de dudas:", options=["Básico", "Intermedio", "Avanzado"], value="Intermedio")
+    
     st.divider()
-    if st.button("🧹 Reiniciar Conversación"):
+    st.header("⚙️ Control de Sesión")
+    
+    # Botón de reinicio
+    if st.button("🧹 Reiniciar Conversación", use_container_width=True):
         st.session_state.messages = []; st.rerun()
+    
+    # NUEVO: Botón de Cierre movido al panel lateral (Solo visible tras interactuar)
+    if st.session_state.get('fase_actual') == 'explicacion' and len(st.session_state.get('messages', [])) > 2:
+        st.markdown("<br>", unsafe_allow_html=True) # Pequeño espacio visual
+        if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True, help="Termina la explicación y pasa a la metacognición"):
+            mostrar_instrucciones_finales()
 
 # ==========================================
 # CONTEXTO Y PROMPT MAESTRO REESTRUCTURADO
@@ -165,7 +175,7 @@ Despídete y da por terminada la sesión.
 """
 
 # ==========================================
-# INTERFAZ DE CHAT
+# INTERFAZ DE CHAT CENTRAL
 # ==========================================
 st.title("🌱 Simulador: Tu alumno virtual")
 st.caption(f"Repasando: **{tema_seleccionado.replace('.pdf', '')}**")
@@ -188,17 +198,18 @@ if len(st.session_state.messages) == 2:
     with col_btn2:
         if st.button("🚀 Empezar", type="primary", use_container_width=True): st.session_state.mostrar_instrucciones = False
     if st.session_state.get("mostrar_instrucciones", False):
-        st.info("Explica los conceptos a tu alumno virtual. Él dudará para que tú tengas que argumentar.")
+        st.info("""
+        **Tu objetivo:** Explica los conceptos a tu alumno virtual. Él dudará y cometerá errores para que tú tengas que argumentar científicamente.
+        
+        *💡 Consejo: Cuando consideres que la explicación ha terminado, abre el menú lateral izquierdo (>) y pulsa 'Iniciar Cierre y Reflexión'.*
+        """)
 
-# 3. CONTROLES SUPERIORES (Dependiendo de la fase)
-if st.session_state.fase_actual == 'explicacion' and len(st.session_state.messages) > 2:
-    if st.button("🏁 Iniciar Cierre y Reflexión", help="Pasa a la fase metacognitiva"):
-        mostrar_instrucciones_finales()
-
-elif st.session_state.fase_actual == 'metacognicion':
+# 3. CONTROLES CENTRALES (Fase Metacognitiva)
+if st.session_state.fase_actual == 'metacognicion':
     st.info("⚠️ Estás en la fase de reflexión. Responde a las preguntas de tu alumno en el chat de abajo.")
     col1, col2 = st.columns([1, 3])
     with col1:
+        # Este botón SÍ se queda en el centro porque es el paso lógico tras escribir en el chat
         if st.button("📄 Generar Rúbrica Final", type="primary", help="Cierra el chat y evalúa"):
             st.session_state.trigger_rubrica = True
             st.rerun()
@@ -221,7 +232,7 @@ if st.session_state.get('trigger_cierre', False):
                 print(f"ERROR DE API: {e}")
                 st.error("⚠️ Error de conexión. Reintenta.")
                 st.session_state.messages.pop()
-                st.session_state.fase_actual = 'explicacion' # Reversión en caso de error
+                st.session_state.fase_actual = 'explicacion' 
 
 if st.session_state.get('trigger_rubrica', False):
     st.session_state.trigger_rubrica = False
@@ -240,7 +251,7 @@ if st.session_state.get('trigger_rubrica', False):
                 print(f"ERROR DE API: {e}")
                 st.error("⚠️ Error de conexión. Reintenta.")
                 st.session_state.messages.pop()
-                st.session_state.fase_actual = 'metacognicion' # Reversión en caso de error
+                st.session_state.fase_actual = 'metacognicion' 
 
 # 5. BOTÓN DE DESCARGA FINAL
 if st.session_state.fase_actual == 'rubrica':
