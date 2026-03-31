@@ -206,7 +206,10 @@ if len(st.session_state.messages) > 2 and not st.session_state.evaluacion_finali
                         st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                         st.session_state.evaluacion_finalizada = True
                         st.rerun()
-                    except: st.error("Error de conexión. Reintenta."); st.session_state.messages.pop()
+                    except Exception as e:
+                        print(f"ERROR DE API: {e}")
+                        st.error("⚠️ Error de conexión. Reintenta.")
+                        st.session_state.messages.pop()
 
 # 4. Descarga
 if st.session_state.evaluacion_finalizada:
@@ -222,7 +225,7 @@ if not st.session_state.evaluacion_finalizada:
         st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
         with st.chat_message("user", avatar="🧑‍🏫"): st.markdown(prompt)
         with st.chat_message("model", avatar="🧑‍🎓"):
-            with st.spinner("..."):
+            with st.spinner("Pensando..."):
                 try:
                     formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
                     chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
@@ -230,4 +233,7 @@ if not st.session_state.evaluacion_finalizada:
                     st.markdown(response.text)
                     st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                     st.rerun()
-                except: st.error("Error. Reintenta."); st.session_state.messages.pop()
+                except Exception as e:
+                    print(f"ERROR DE API: {e}")
+                    st.error("⚠️ Ha habido un microcorte de conexión. Por favor, vuelve a intentar enviar el mensaje.")
+                    st.session_state.messages.pop()
