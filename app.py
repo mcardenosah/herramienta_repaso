@@ -63,19 +63,18 @@ def get_temas(asignatura, directory="apuntes"):
 # ==========================================
 # DIÁLOGO DE INSTRUCCIONES FINALES
 # ==========================================
-@st.dialog("📝 Próximos pasos para tu evaluación")
+@st.dialog("📝 Fase de Reflexión (Metacognición)")
 def mostrar_instrucciones_finales():
     st.markdown("""
-    Has terminado la sesión de explicación. Para completar la actividad correctamente, sigue estos pasos:
+    Has terminado la fase de explicación. Para cerrar el ciclo de aprendizaje correctamente:
     
-    1. **Lee el resumen** que ha preparado tu "alumno virtual" para comprobar qué ha aprendido.
-    2. **Responde a las 3 preguntas** de reflexión que te hará a continuación.
-    3. Al finalizar, pulsa el botón **'📥 Descargar rúbrica'** que aparecerá abajo del todo.
-    4. Sube el archivo descargado (`.md`) a la tarea correspondiente en **Aules** o **Microsoft Teams**.
-    
-    *Ya puedes cerrar esta ventana para ver tu informe.*
+    1. Tu "alumno virtual" hará un breve resumen y te planteará **3 preguntas de reflexión** sobre tu práctica hoy.
+    2. **Responde** a esas preguntas utilizando la caja de chat (sigue abierta).
+    3. Cuando hayas contestado, pulsa el botón **'📄 Generar Rúbrica Final'** que aparecerá en la pantalla.
     """)
-    if st.button("Entendido, cerrar", type="primary", use_container_width=True):
+    # El botón "Entendido" ahora simplemente activa el "gatillo" para cambiar de fase
+    if st.button("Entendido, empezar reflexión", type="primary", use_container_width=True):
+        st.session_state.trigger_cierre = True
         st.rerun()
 
 # ==========================================
@@ -87,7 +86,9 @@ def init_chat_history(asignatura, tema):
         st.session_state.messages = []
         st.session_state.current_tema_id = tema_id
         st.session_state.mostrar_instrucciones = False
-        st.session_state.evaluacion_finalizada = False # Control de estado
+        st.session_state.fase_actual = 'explicacion' # Estados: 'explicacion', 'metacognicion', 'rubrica'
+        st.session_state.trigger_cierre = False
+        st.session_state.trigger_rubrica = False
     
     if len(st.session_state.messages) == 0:
         st.session_state.messages.append({"role": "user", "content": f"Inicio sesión: {tema}", "show": False})
@@ -126,7 +127,7 @@ with st.sidebar:
         st.session_state.messages = []; st.rerun()
 
 # ==========================================
-# CONTEXTO Y PROMPT
+# CONTEXTO Y PROMPT MAESTRO REESTRUCTURADO
 # ==========================================
 ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
 contexto_texto = extract_text_from_pdf(ruta_pdf)
@@ -144,17 +145,23 @@ Eres un simulador de estudiante (Efecto Protegé). El usuario es tu profesor.
 - Base de conocimiento: {contexto_texto}
 {bloque_concepciones}
 
-REGLAS:
+REGLAS GENERALES:
 1. Nunca des la respuesta correcta. Pregunta y duda.
 2. Si el usuario copia del libro, pide ejemplos reales.
 3. No menciones el PDF ni los apuntes.
 4. Mantén el rol de estudiante curioso.
 
-CIERRE (/FIN_DIALOGO):
-1. Resume lo aprendido.
-2. Haz 3 preguntas metacognitivas una a una.
-3. Genera Rúbrica (Criterio | Nivel | Evidencia literal). {bloque_evaluacion_concepciones}
-REGLA CRÍTICA: La "Evidencia literal" debe ser SIEMPRE una frase entre comillas escrita por el USUARIO. Prohibido citarte a ti mismo.
+FASES DE CIERRE (MUY IMPORTANTE):
+
+FASE 1: METACOGNICIÓN (Se activa SOLO cuando recibes el comando oculto "/INICIAR_CIERRE"):
+1. Haz un breve resumen de lo que has entendido hoy gracias al usuario.
+2. Inicia la fase de metacognición haciendo la PRIMERA de 3 preguntas para que el usuario (tu profe) reflexione sobre su forma de explicar (ej. "¿Qué parte crees que me ha costado más entender?", "¿Qué cambiarías si me lo tuvieras que explicar mañana?").
+3. Espera a que el usuario responda en su turno. Luego haz la segunda pregunta, y luego la tercera. NO GENERES LA RÚBRICA AÚN.
+
+FASE 2: EVALUACIÓN (Se activa SOLO cuando recibes el comando oculto "/GENERAR_RUBRICA"):
+Genera la Rúbrica Formativa (Criterio | Nivel de Logro | Evidencia literal). {bloque_evaluacion_concepciones}
+REGLA ESTRICTA PARA LA RÚBRICA: La columna "Evidencia literal" DEBE contener ÚNICAMENTE frases exactas (entre comillas) escritas por el USUARIO durante la conversación. Prohibido citarte a ti mismo. Si no hay evidencia, escribe "Sin evidencia".
+Despídete y da por terminada la sesión.
 """
 
 # ==========================================
@@ -167,16 +174,13 @@ if not api_key: st.stop()
 client = genai.Client(api_key=api_key)
 init_chat_history(asignatura_seleccionada, tema_seleccionado)
 
-# Estado de finalización
-dialogo_terminado = st.session_state.evaluacion_finalizada or (len(st.session_state.messages) > 2 and st.session_state.messages[-1].get("content") == "/FIN_DIALOGO")
-
-# 1. Historial
+# 1. Mostrar Historial
 for msg in st.session_state.messages:
     if msg.get("show", True):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "model" else "🧑‍🏫"):
             st.markdown(msg["content"])
 
-# 2. Inicio DUA
+# 2. Inicio DUA (Instrucciones de arranque)
 if len(st.session_state.messages) == 2:
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
@@ -186,42 +190,70 @@ if len(st.session_state.messages) == 2:
     if st.session_state.get("mostrar_instrucciones", False):
         st.info("Explica los conceptos a tu alumno virtual. Él dudará para que tú tengas que argumentar.")
 
-# 3. Botón Terminar y Evaluación
-if len(st.session_state.messages) > 2 and not st.session_state.evaluacion_finalizada:
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("🏁 Terminar", help="Finaliza y evalúa"):
-            # ACTIVAMOS EL DIÁLOGO EMERGENTE
-            mostrar_instrucciones_finales()
-            
-            prompt_rapido = "/FIN_DIALOGO"
-            st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": True})
-            with st.chat_message("model", avatar="🧑‍🎓"):
-                with st.spinner("Generando evaluación..."):
-                    try:
-                        formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
-                        chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
-                        response = chat.send_message(prompt_rapido)
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                        st.session_state.evaluacion_finalizada = True
-                        st.rerun()
-                    except Exception as e:
-                        print(f"ERROR DE API: {e}")
-                        st.error("⚠️ Error de conexión. Reintenta.")
-                        st.session_state.messages.pop()
+# 3. CONTROLES SUPERIORES (Dependiendo de la fase)
+if st.session_state.fase_actual == 'explicacion' and len(st.session_state.messages) > 2:
+    if st.button("🏁 Iniciar Cierre y Reflexión", help="Pasa a la fase metacognitiva"):
+        mostrar_instrucciones_finales()
 
-# 4. Descarga
-if st.session_state.evaluacion_finalizada:
-    st.success("🎉 Actividad finalizada. Descarga tu rúbrica.")
+elif st.session_state.fase_actual == 'metacognicion':
+    st.info("⚠️ Estás en la fase de reflexión. Responde a las preguntas de tu alumno en el chat de abajo.")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("📄 Generar Rúbrica Final", type="primary", help="Cierra el chat y evalúa"):
+            st.session_state.trigger_rubrica = True
+            st.rerun()
+
+# 4. PROCESAMIENTO DE TRIGGERS (Llamadas automáticas a la API)
+if st.session_state.get('trigger_cierre', False):
+    st.session_state.trigger_cierre = False
+    st.session_state.fase_actual = 'metacognicion'
+    prompt_rapido = "/INICIAR_CIERRE"
+    st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": False})
+    with st.chat_message("model", avatar="🧑‍🎓"):
+        with st.spinner("Preparando el resumen y las preguntas..."):
+            try:
+                formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
+                chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
+                response = chat.send_message(prompt_rapido)
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+            except Exception as e:
+                print(f"ERROR DE API: {e}")
+                st.error("⚠️ Error de conexión. Reintenta.")
+                st.session_state.messages.pop()
+                st.session_state.fase_actual = 'explicacion' # Reversión en caso de error
+
+if st.session_state.get('trigger_rubrica', False):
+    st.session_state.trigger_rubrica = False
+    st.session_state.fase_actual = 'rubrica'
+    prompt_rapido = "/GENERAR_RUBRICA"
+    st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": False})
+    with st.chat_message("model", avatar="🧑‍🎓"):
+        with st.spinner("Evaluando evidencias y generando rúbrica..."):
+            try:
+                formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
+                chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
+                response = chat.send_message(prompt_rapido)
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+            except Exception as e:
+                print(f"ERROR DE API: {e}")
+                st.error("⚠️ Error de conexión. Reintenta.")
+                st.session_state.messages.pop()
+                st.session_state.fase_actual = 'metacognicion' # Reversión en caso de error
+
+# 5. BOTÓN DE DESCARGA FINAL
+if st.session_state.fase_actual == 'rubrica':
+    st.success("🎉 Actividad finalizada. Descarga tu rúbrica y súbela a Aules/Teams.")
     texto_rubrica = st.session_state.messages[-1]["content"]
     ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    documento = f"INFORME - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica}"
+    documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica}"
     st.download_button(label="📥 Descargar rúbrica", data=documento, file_name=f"Rubrica_{datetime.datetime.now().strftime('%d%m%Y')}.md", mime="text/markdown", type="primary")
 
-# 5. Entrada Chat (Se oculta al terminar)
-if not st.session_state.evaluacion_finalizada:
-    if prompt := st.chat_input("Explica aquí..."):
+# 6. ENTRADA DE CHAT (Visible en Explicación y Metacognición)
+if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
+    placeholder = "Responde a tu alumno aquí..." if st.session_state.fase_actual == 'metacognicion' else "Explica aquí..."
+    if prompt := st.chat_input(placeholder):
         st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
         with st.chat_message("user", avatar="🧑‍🏫"): st.markdown(prompt)
         with st.chat_message("model", avatar="🧑‍🎓"):
