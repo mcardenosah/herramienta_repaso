@@ -89,12 +89,16 @@ def init_chat_history(asignatura, tema):
         st.session_state.fase_actual = 'explicacion' # Estados: 'explicacion', 'metacognicion', 'rubrica'
         st.session_state.trigger_cierre = False
         st.session_state.trigger_rubrica = False
+        st.session_state.texto_rubrica_final = "" # Caja fuerte para el .md
     
     if len(st.session_state.messages) == 0:
         st.session_state.messages.append({"role": "user", "content": f"Inicio sesión: {tema}", "show": False})
+        
+        # El alumno virtual toma la iniciativa y hace la primera pregunta de andamiaje general.
+        tema_limpio = tema.replace('.pdf', '').replace('_', ' ')
         st.session_state.messages.append({
             "role": "model", 
-            "content": f"¡Hola! Ya estoy listo para que repasemos el tema de **{tema.replace('.pdf', '').replace('_', ' ')}**. ¿Por qué concepto empezamos hoy?",
+            "content": f"¡Hola! He estado intentando estudiar el tema de **{tema_limpio}**, pero la verdad es que me cuesta un poco arrancar. ¿Me podrías explicar con tus propias palabras cuál es la idea principal o el concepto más importante para empezar a situarme?",
             "show": True
         })
 
@@ -130,7 +134,7 @@ with st.sidebar:
     if st.button("🧹 Reiniciar Conversación", use_container_width=True):
         st.session_state.messages = []; st.rerun()
     
-    # NUEVO: Botón de Cierre movido al panel lateral (Solo visible tras interactuar)
+    # Botón de Cierre movido al panel lateral (Solo visible tras interactuar)
     if st.session_state.get('fase_actual') == 'explicacion' and len(st.session_state.get('messages', [])) > 2:
         st.markdown("<br>", unsafe_allow_html=True) # Pequeño espacio visual
         if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True, help="Termina la explicación y pasa a la metacognición"):
@@ -170,7 +174,13 @@ FASE 1: METACOGNICIÓN (Se activa SOLO cuando recibes el comando oculto "/INICIA
 
 FASE 2: EVALUACIÓN (Se activa SOLO cuando recibes el comando oculto "/GENERAR_RUBRICA"):
 Genera la Rúbrica Formativa (Criterio | Nivel de Logro | Evidencia literal). {bloque_evaluacion_concepciones}
-REGLA ESTRICTA PARA LA RÚBRICA: La columna "Evidencia literal" DEBE contener ÚNICAMENTE frases exactas (entre comillas) escritas por el USUARIO durante la conversación. Prohibido citarte a ti mismo. Si no hay evidencia, escribe "Sin evidencia".
+
+[REGLA DE ORO PARA EVIDENCIAS LITERALES - OBLIGATORIO]: 
+- Las evidencias de la rúbrica DEBEN SER EXCLUSIVAMENTE FRASES ESCRITAS POR EL USUARIO. 
+- ESTÁ ESTRICTAMENTE PROHIBIDO citar tus propios textos (los del estudiante virtual). 
+- Busca en el historial lo que te ha escrito el usuario y cópialo literalmente entre comillas. 
+- Si no hay una frase del usuario que sirva de evidencia para un criterio concreto, pon obligatoriamente: "Sin evidencia directa en el texto del alumno".
+
 Despídete y da por terminada la sesión.
 """
 
@@ -196,10 +206,10 @@ if len(st.session_state.messages) == 2:
     with col_btn1:
         if st.button("📖 ¿Cómo funciona?", use_container_width=True): st.session_state.mostrar_instrucciones = True
     with col_btn2:
-        if st.button("🚀 Empezar", type="primary", use_container_width=True): st.session_state.mostrar_instrucciones = False
+        if st.button("🚀 Empezar a explicar", type="primary", use_container_width=True): st.session_state.mostrar_instrucciones = False
     if st.session_state.get("mostrar_instrucciones", False):
         st.info("""
-        **Tu objetivo:** Explica los conceptos a tu alumno virtual. Él dudará y cometerá errores para que tú tengas que argumentar científicamente.
+        **Tu objetivo:** Explica los conceptos a tu alumno virtual respondiendo a sus dudas. Él cometerá errores para que tú tengas que argumentar científicamente.
         
         *💡 Consejo: Cuando consideres que la explicación ha terminado, abre el menú lateral izquierdo (>) y pulsa 'Iniciar Cierre y Reflexión'.*
         """)
@@ -228,6 +238,7 @@ if st.session_state.get('trigger_cierre', False):
                 response = chat.send_message(prompt_rapido)
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                st.rerun() # Refresco de pantalla limpio
             except Exception as e:
                 print(f"ERROR DE API: {e}")
                 st.error("⚠️ Error de conexión. Reintenta.")
@@ -245,8 +256,13 @@ if st.session_state.get('trigger_rubrica', False):
                 formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
                 chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
                 response = chat.send_message(prompt_rapido)
+                
+                # GUARDADO BLINDADO DE LA RÚBRICA EN LA CAJA FUERTE
+                st.session_state.texto_rubrica_final = response.text 
+                
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                st.rerun() # Refresco de pantalla limpio para forzar la aparición del botón de descarga
             except Exception as e:
                 print(f"ERROR DE API: {e}")
                 st.error("⚠️ Error de conexión. Reintenta.")
@@ -256,9 +272,10 @@ if st.session_state.get('trigger_rubrica', False):
 # 5. BOTÓN DE DESCARGA FINAL
 if st.session_state.fase_actual == 'rubrica':
     st.success("🎉 Actividad finalizada. Descarga tu rúbrica y súbela a Aules/Teams.")
-    texto_rubrica = st.session_state.messages[-1]["content"]
+    # Leemos exclusivamente de la "caja fuerte", garantizando que nunca estará vacío
+    texto_rubrica_documento = st.session_state.get("texto_rubrica_final", "Error al cargar la rúbrica.")
     ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica}"
+    documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica_documento}"
     st.download_button(label="📥 Descargar rúbrica", data=documento, file_name=f"Rubrica_{datetime.datetime.now().strftime('%d%m%Y')}.md", mime="text/markdown", type="primary")
 
 # 6. ENTRADA DE CHAT (Visible en Explicación y Metacognición)
