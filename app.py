@@ -8,8 +8,8 @@ import time
 # ==========================================
 # CONFIGURACIÓN GENERAL DE LA IA
 # ==========================================
-# Usamos el motor estable clásico que tiene la cuota abierta (1500 peticiones/día)
-MODELO_IA = "gemini-1.5-flash"
+# Usamos el estándar de producción más avanzado
+MODELO_IA = "gemini-2.0-flash"
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -25,7 +25,6 @@ st.set_page_config(
 # FUNCIONES AUXILIARES Y DE RED
 # ==========================================
 def extract_text_from_pdf(filepath):
-    """Extrae el texto de un archivo PDF dado su ruta."""
     try:
         with open(filepath, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
@@ -39,19 +38,16 @@ def extract_text_from_pdf(filepath):
         return f"Error al leer el PDF: {e}"
 
 def get_concepciones_erroneas(pdf_filepath):
-    """Busca de forma invisible un archivo .txt con el sufijo '_errores.txt'."""
     txt_filepath = pdf_filepath.replace('.pdf', '_errores.txt')
     if os.path.exists(txt_filepath):
         try:
             with open(txt_filepath, 'r', encoding='utf-8') as file:
                 return file.read().strip()
         except Exception as e:
-            print(f"Error al leer el archivo de concepciones: {e}")
             return ""
     return ""
 
 def get_asignaturas(directory="apuntes"):
-    """Lee la carpeta raíz y devuelve las subcarpetas (Asignaturas)."""
     if not os.path.exists(directory):
         os.makedirs(directory)
         return []
@@ -59,7 +55,6 @@ def get_asignaturas(directory="apuntes"):
     return sorted(asignaturas)
 
 def get_temas(asignatura, directory="apuntes"):
-    """Devuelve los PDFs dentro de la carpeta de la asignatura seleccionada."""
     path = os.path.join(directory, asignatura)
     if not os.path.exists(path):
         return []
@@ -68,35 +63,42 @@ def get_temas(asignatura, directory="apuntes"):
 
 def enviar_mensaje_con_reintentos(prompt_text, history_messages, system_prompt):
     """
-    AMORTIGUADOR DE ERRORES CON LIBRERÍA CLÁSICA (google-generativeai).
+    AMORTIGUADOR DE ERRORES INTELIGENTE.
+    Traduce los bloqueos geopolíticos de Google a mensajes claros.
     """
     max_intentos = 4
     ultimo_error = None
     
-    # 1. Instanciamos el modelo clásico
     model = genai.GenerativeModel(
         model_name=MODELO_IA,
         system_instruction=system_prompt
     )
     
-    # 2. Convertimos el historial de Streamlit al formato que exige la librería clásica
     formatted_history = []
     for msg in history_messages:
         role = "model" if msg["role"] == "model" else "user"
-        # Protegemos contra mensajes vacíos que hacen fallar a la API
         content = msg["content"] if msg["content"].strip() else "..."
         formatted_history.append({"role": role, "parts": [content]})
         
     for intento in range(max_intentos):
         try:
-            # 3. Enviamos el mensaje
             chat = model.start_chat(history=formatted_history)
             response = chat.send_message(prompt_text)
             return response.text
         except Exception as e:
             ultimo_error = e
+            error_str = str(e).lower()
+            
+            # DIAGNÓSTICO INTELIGENTE DE ERRORES GEOPOLÍTICOS
+            if "limit: 0" in error_str:
+                raise Exception("BLOQUEO_UE: Google ha detectado que el servidor está en Europa y ha bloqueado la capa gratuita (Cuota 0). Solución: Despliega en Streamlit Cloud desde EE.UU. o activa facturación.")
+            elif "limit: 20" in error_str:
+                raise Exception("LÍMITE_PREVIEW: Se han agotado las 20 peticiones diarias de este modelo experimental.")
+            elif "404" in error_str and "not found" in error_str:
+                raise Exception("MODELO_OCULTO: Google ha ocultado este modelo para las cuentas europeas gratuitas.")
+                
             if intento < max_intentos - 1:
-                time.sleep(2 ** intento) # Retroceso exponencial: 1s, 2s, 4s...
+                time.sleep(2 ** intento)
             else:
                 raise ultimo_error
 
@@ -125,15 +127,13 @@ def init_chat_history(asignatura, tema):
         st.session_state.messages = []
         st.session_state.current_tema_id = tema_id
         st.session_state.mostrar_instrucciones = False
-        st.session_state.fase_actual = 'explicacion' # Estados: 'explicacion', 'metacognicion', 'rubrica'
+        st.session_state.fase_actual = 'explicacion'
         st.session_state.trigger_cierre = False
         st.session_state.trigger_rubrica = False
         st.session_state.texto_rubrica_final = "" 
     
     if len(st.session_state.messages) == 0:
         st.session_state.messages.append({"role": "user", "content": f"Inicio sesión: {tema}", "show": False})
-        
-        # El alumno virtual toma la iniciativa
         tema_limpio = tema.replace('.pdf', '').replace('_', ' ')
         st.session_state.messages.append({
             "role": "model", 
@@ -152,7 +152,6 @@ except:
 if not api_key:
     st.stop()
 
-# Configuración global de la librería clásica
 genai.configure(api_key=api_key)
 
 # ==========================================
@@ -174,13 +173,12 @@ with st.sidebar:
     
     st.divider()
     st.header("⚙️ Control de Sesión")
-    
     if st.button("🧹 Reiniciar Conversación", use_container_width=True):
         st.session_state.messages = []; st.rerun()
     
     if st.session_state.get('fase_actual') == 'explicacion' and len(st.session_state.get('messages', [])) > 2:
         st.markdown("<br>", unsafe_allow_html=True) 
-        if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True, help="Termina la explicación y pasa a la metacognición"):
+        if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True):
             mostrar_instrucciones_finales()
 
 # ==========================================
@@ -210,21 +208,21 @@ REGLAS GENERALES:
 
 FASES DE CIERRE (MUY IMPORTANTE):
 
-FASE 1: METACOGNICIÓN (Se activa SOLO cuando recibes el comando oculto "/INICIAR_CIERRE"):
+FASE 1: METACOGNICIÓN (Se activa SOLO cuando recibes el comando "/INICIAR_CIERRE"):
 1. Haz un breve resumen de lo que has entendido hoy gracias al usuario.
-2. Inicia la fase de metacognición haciendo la PRIMERA de 3 preguntas para que el usuario (tu profe) reflexione sobre su forma de explicar (ej. "¿Qué parte crees que me ha costado más entender?", "¿Qué cambiarías si me lo tuvieras que explicar mañana?").
-3. Espera a que el usuario responda en su turno. Luego haz la segunda pregunta, y luego la tercera. NO GENERES LA RÚBRICA AÚN.
+2. Inicia la fase de metacognición haciendo la PRIMERA de 3 preguntas para que tu profe reflexione (ej. "¿Qué crees que me costó más?").
+3. Espera a que responda. Luego la segunda, luego la tercera. NO GENERES LA RÚBRICA AÚN.
 
-FASE 2: EVALUACIÓN (Se activa SOLO cuando recibes el comando oculto "/GENERAR_RUBRICA"):
+FASE 2: EVALUACIÓN (Se activa SOLO cuando recibes el comando "/GENERAR_RUBRICA"):
 Genera la Rúbrica Formativa (Criterio | Nivel de Logro | Evidencia literal). {bloque_evaluacion_concepciones}
 
 [REGLA DE ORO PARA EVIDENCIAS LITERALES - OBLIGATORIO]: 
-- Las evidencias de la rúbrica DEBEN SER EXCLUSIVAMENTE FRASES ESCRITAS POR EL USUARIO. 
-- ESTÁ ESTRICTAMENTE PROHIBIDO citar tus propios textos (los del estudiante virtual). 
-- Busca en el historial lo que te ha escrito el usuario y cópialo literalmente entre comillas. 
-- Si no hay una frase del usuario que sirva de evidencia para un criterio concreto, pon obligatoriamente: "Sin evidencia directa en el texto del alumno".
+- Las evidencias DEBEN SER EXCLUSIVAMENTE FRASES ESCRITAS POR EL USUARIO. 
+- ESTÁ ESTRICTAMENTE PROHIBIDO citarte a ti mismo. 
+- Copia del historial literalmente entre comillas. 
+- Si no hay frase del usuario, pon: "Sin evidencia directa".
 
-Despídete y da por terminada la sesión.
+Despídete y termina la sesión.
 """
 
 # ==========================================
@@ -249,21 +247,18 @@ if len(st.session_state.messages) == 2:
     with col_btn2:
         if st.button("🚀 Empezar a explicar", type="primary", use_container_width=True): st.session_state.mostrar_instrucciones = False
     if st.session_state.get("mostrar_instrucciones", False):
-        st.info("""
-        **Tu objetivo:** Explica los conceptos a tu alumno virtual respondiendo a sus dudas. Él cometerá errores para que tú tengas que argumentar científicamente.
-        *💡 Consejo: Cuando consideres que la explicación ha terminado, abre el menú lateral izquierdo (>) y pulsa 'Iniciar Cierre y Reflexión'.*
-        """)
+        st.info("Explica los conceptos a tu alumno virtual. Él cometerá errores para que tú argumentes.\n*💡 Consejo: Usa el menú lateral (>) para iniciar el cierre.*")
 
 # 3. CONTROLES CENTRALES (Fase Metacognitiva)
 if st.session_state.fase_actual == 'metacognicion':
     st.info("⚠️ Estás en la fase de reflexión. Responde a las preguntas de tu alumno en el chat de abajo.")
     col1, col2 = st.columns([1, 3])
     with col1:
-        if st.button("📄 Generar Rúbrica Final", type="primary", help="Cierra el chat y evalúa"):
+        if st.button("📄 Generar Rúbrica Final", type="primary"):
             st.session_state.trigger_rubrica = True
             st.rerun()
 
-# 4. PROCESAMIENTO DE TRIGGERS CON REINTENTOS BLINDADOS
+# 4. PROCESAMIENTO DE TRIGGERS
 if st.session_state.get('trigger_cierre', False):
     st.session_state.trigger_cierre = False
     st.session_state.fase_actual = 'metacognicion'
@@ -277,8 +272,7 @@ if st.session_state.get('trigger_cierre', False):
                 st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
                 st.rerun() 
             except Exception as e:
-                # CHIVATO DE ERRORES: Ahora muestra exactamente por qué falla
-                st.error(f"⚠️ Detalle técnico: {str(e)}")
+                st.error(f"⚠️ {str(e)}")
                 st.session_state.messages.pop()
                 st.session_state.fase_actual = 'explicacion' 
 
@@ -296,20 +290,19 @@ if st.session_state.get('trigger_rubrica', False):
                 st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
                 st.rerun() 
             except Exception as e:
-                # CHIVATO DE ERRORES
-                st.error(f"⚠️ Detalle técnico: {str(e)}")
+                st.error(f"⚠️ {str(e)}")
                 st.session_state.messages.pop()
                 st.session_state.fase_actual = 'metacognicion' 
 
 # 5. BOTÓN DE DESCARGA FINAL
 if st.session_state.fase_actual == 'rubrica':
     st.success("🎉 Actividad finalizada. Descarga tu rúbrica y súbela a Aules/Teams.")
-    texto_rubrica_documento = st.session_state.get("texto_rubrica_final", "Error al cargar la rúbrica.")
+    texto_rubrica_documento = st.session_state.get("texto_rubrica_final", "Error al cargar.")
     ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica_documento}"
     st.download_button(label="📥 Descargar rúbrica", data=documento, file_name=f"Rubrica_{datetime.datetime.now().strftime('%d%m%Y')}.md", mime="text/markdown", type="primary")
 
-# 6. ENTRADA DE CHAT NORMAL CON REINTENTOS BLINDADOS
+# 6. ENTRADA DE CHAT NORMAL
 if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
     placeholder = "Responde a tu alumno aquí..." if st.session_state.fase_actual == 'metacognicion' else "Explica aquí..."
     if prompt := st.chat_input(placeholder):
@@ -323,6 +316,5 @@ if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
                     st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
                     st.rerun()
                 except Exception as e:
-                    # CHIVATO DE ERRORES: Imprescindible para no ir a ciegas
-                    st.error(f"⚠️ Detalle técnico: {str(e)}")
+                    st.error(f"⚠️ {str(e)}")
                     st.session_state.messages.pop()
