@@ -7,6 +7,13 @@ import datetime
 import time
 
 # ==========================================
+# CONFIGURACIÓN GENERAL DE LA IA
+# ==========================================
+# Usamos la versión de producción exacta (-002) para evitar errores 404 
+# y garantizar el límite gratuito de 1.500 peticiones al día.
+MODELO_IA = "gemini-1.5-flash-002"
+
+# ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
 # ==========================================
 st.set_page_config(
@@ -72,7 +79,7 @@ def enviar_mensaje_con_reintentos(client, prompt_text, history, system_prompt):
     for intento in range(max_intentos):
         try:
             chat = client.chats.create(
-                model="gemini-2.5-flash", # CAMBIO CRÍTICO: Vuelta a la versión que nos funcionaba bien.
+                model=MODELO_IA, # Usamos la variable global definida arriba
                 config=types.GenerateContentConfig(system_instruction=system_prompt),
                 history=history
             )
