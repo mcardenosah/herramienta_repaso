@@ -72,7 +72,7 @@ def enviar_mensaje_con_reintentos(client, prompt_text, history, system_prompt):
     for intento in range(max_intentos):
         try:
             chat = client.chats.create(
-                model="gemini-1.5-flash", # CAMBIO CRÍTICO: Vuelta al modelo 1.5, que tiene la capa gratuita abierta
+                model="gemini-2.5-flash", # CAMBIO CRÍTICO: Vuelta a la versión que nos funcionaba bien.
                 config=types.GenerateContentConfig(system_instruction=system_prompt),
                 history=history
             )
