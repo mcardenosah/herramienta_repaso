@@ -1,8 +1,15 @@
 import os
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 import PyPDF2
+import datetime
+import time
+
+# ==========================================
+# CONFIGURACIÓN GENERAL DE LA IA
+# ==========================================
+# Usamos el motor estable clásico que tiene la cuota abierta (1500 peticiones/día)
+MODELO_IA = "gemini-1.5-flash"
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -15,7 +22,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# FUNCIONES AUXILIARES DE ARCHIVOS
+# FUNCIONES AUXILIARES Y DE RED
 # ==========================================
 def extract_text_from_pdf(filepath):
     """Extrae el texto de un archivo PDF dado su ruta."""
@@ -31,12 +38,23 @@ def extract_text_from_pdf(filepath):
     except Exception as e:
         return f"Error al leer el PDF: {e}"
 
+def get_concepciones_erroneas(pdf_filepath):
+    """Busca de forma invisible un archivo .txt con el sufijo '_errores.txt'."""
+    txt_filepath = pdf_filepath.replace('.pdf', '_errores.txt')
+    if os.path.exists(txt_filepath):
+        try:
+            with open(txt_filepath, 'r', encoding='utf-8') as file:
+                return file.read().strip()
+        except Exception as e:
+            print(f"Error al leer el archivo de concepciones: {e}")
+            return ""
+    return ""
+
 def get_asignaturas(directory="apuntes"):
     """Lee la carpeta raíz y devuelve las subcarpetas (Asignaturas)."""
     if not os.path.exists(directory):
-        os.makedirs(directory) # Crea la carpeta si no existe
+        os.makedirs(directory)
         return []
-    # Filtra para obtener solo directorios (carpetas)
     asignaturas = [d for d in os.listdir(directory) if os.path.isdir(os.path.join(directory, d))]
     return sorted(asignaturas)
 
@@ -48,252 +66,263 @@ def get_temas(asignatura, directory="apuntes"):
     pdfs = [f for f in os.listdir(path) if f.endswith('.pdf')]
     return sorted(pdfs)
 
+def enviar_mensaje_con_reintentos(prompt_text, history_messages, system_prompt):
+    """
+    AMORTIGUADOR DE ERRORES CON LIBRERÍA CLÁSICA (google-generativeai).
+    """
+    max_intentos = 4
+    ultimo_error = None
+    
+    # 1. Instanciamos el modelo clásico
+    model = genai.GenerativeModel(
+        model_name=MODELO_IA,
+        system_instruction=system_prompt
+    )
+    
+    # 2. Convertimos el historial de Streamlit al formato que exige la librería clásica
+    formatted_history = []
+    for msg in history_messages:
+        role = "model" if msg["role"] == "model" else "user"
+        # Protegemos contra mensajes vacíos que hacen fallar a la API
+        content = msg["content"] if msg["content"].strip() else "..."
+        formatted_history.append({"role": role, "parts": [content]})
+        
+    for intento in range(max_intentos):
+        try:
+            # 3. Enviamos el mensaje
+            chat = model.start_chat(history=formatted_history)
+            response = chat.send_message(prompt_text)
+            return response.text
+        except Exception as e:
+            ultimo_error = e
+            if intento < max_intentos - 1:
+                time.sleep(2 ** intento) # Retroceso exponencial: 1s, 2s, 4s...
+            else:
+                raise ultimo_error
+
+# ==========================================
+# DIÁLOGO DE INSTRUCCIONES FINALES
+# ==========================================
+@st.dialog("📝 Fase de Reflexión (Metacognición)")
+def mostrar_instrucciones_finales():
+    st.markdown("""
+    Has terminado la fase de explicación. Para cerrar el ciclo de aprendizaje correctamente:
+    
+    1. Tu "alumno virtual" hará un breve resumen y te planteará **3 preguntas de reflexión** sobre tu práctica hoy.
+    2. **Responde** a esas preguntas utilizando la caja de chat (sigue abierta).
+    3. Cuando hayas contestado, pulsa el botón **'📄 Generar Rúbrica Final'** que aparecerá en la pantalla.
+    """)
+    if st.button("Entendido, empezar reflexión", type="primary", use_container_width=True):
+        st.session_state.trigger_cierre = True
+        st.rerun()
+
 # ==========================================
 # GESTIÓN DEL HISTORIAL DE CHAT
 # ==========================================
 def init_chat_history(asignatura, tema):
-    """Inicializa el historial. Si cambian de asignatura o tema, se resetea."""
-    tema_id = f"{asignatura}_{tema}" # Identificador único de la sesión
-    
+    tema_id = f"{asignatura}_{tema}"
     if "current_tema_id" not in st.session_state or st.session_state.current_tema_id != tema_id:
         st.session_state.messages = []
         st.session_state.current_tema_id = tema_id
-        st.session_state.mostrar_instrucciones = False # Reseteo de la vista de instrucciones
+        st.session_state.mostrar_instrucciones = False
+        st.session_state.fase_actual = 'explicacion' # Estados: 'explicacion', 'metacognicion', 'rubrica'
+        st.session_state.trigger_cierre = False
+        st.session_state.trigger_rubrica = False
+        st.session_state.texto_rubrica_final = "" 
     
     if len(st.session_state.messages) == 0:
-        # Mensaje técnico oculto para cumplir reglas de la API de Gemini
-        st.session_state.messages.append({
-            "role": "user", 
-            "content": f"Iniciamos la sesión de estudio de {asignatura.replace('_', ' ')}, tema: {tema.replace('.pdf', '')}. Puedes hacer tu primera intervención como estudiante.",
-            "show": False 
-        })
-        # Mensaje de bienvenida visible (Starter prompt DUA)
+        st.session_state.messages.append({"role": "user", "content": f"Inicio sesión: {tema}", "show": False})
+        
+        # El alumno virtual toma la iniciativa
+        tema_limpio = tema.replace('.pdf', '').replace('_', ' ')
         st.session_state.messages.append({
             "role": "model", 
-            "content": f"¡Hola! Ya estoy listo para que repasemos el tema de **{tema.replace('.pdf', '').replace('_', ' ')}**. ¿Por qué concepto empezamos hoy?",
+            "content": f"¡Hola! He estado intentando estudiar el tema de **{tema_limpio}**, pero la verdad es que me cuesta un poco arrancar. ¿Me podrías explicar con tus propias palabras cuál es la idea principal o el concepto más importante para empezar a situarme?",
             "show": True
         })
 
 # ==========================================
-# GESTIÓN DE LA API KEY (SEGURIDAD)
+# GESTIÓN DE LA API KEY Y CONEXIÓN
 # ==========================================
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except:
-    api_key = st.sidebar.text_input("🔑 API Key de Gemini (Falta configurar st.secrets)", type="password")
-
-# ==========================================
-# PANEL LATERAL (MENÚ EN CASCADA)
-# ==========================================
-with st.sidebar:
-    st.header("📚 Menú de Estudio")
-    st.markdown("Selecciona tu grupo y el tema de hoy.")
-    
-    # PASO 1: Elegir Asignatura (Carpeta)
-    asignaturas = get_asignaturas("apuntes")
-    
-    if not asignaturas:
-        st.error("⚠️ Docente: Crea subcarpetas dentro de 'apuntes' en GitHub (ej: 'apuntes/Biologia_3_ESO').")
-        st.stop()
-        
-    asignatura_seleccionada = st.selectbox("1. Tu Asignatura / Grupo:", asignaturas, format_func=lambda x: x.replace("_", " "))
-    
-    # PASO 2: Elegir Tema (PDFs dentro de la carpeta elegida)
-    temas = get_temas(asignatura_seleccionada)
-    
-    if not temas:
-        st.warning(f"⚠️ No hay PDFs subidos en la carpeta de {asignatura_seleccionada.replace('_', ' ')}.")
-        st.stop()
-        
-    tema_seleccionado = st.selectbox("2. Tema a repasar:", temas, format_func=lambda x: x.replace(".pdf", "").replace("_", " "))
-    
-    st.divider()
-    
-    # PASO 3: Variables de configuración del simulador
-    idioma = st.selectbox("3. Idioma:", ["Castellano", "Valenciano"])
-    nivel_desafio = st.select_slider("4. Nivel de dificultad de las dudas:", options=["Básico", "Intermedio", "Avanzado"], value="Intermedio")
-    
-    st.divider()
-    if st.button("🧹 Reiniciar Conversación"):
-        st.session_state.messages = []
-        st.rerun()
-
-# ==========================================
-# EXTRACCIÓN DEL CONTEXTO Y PROMPT MAESTRO
-# ==========================================
-# Ruta dinámica basada en las dos selecciones
-ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
-contexto_texto = extract_text_from_pdf(ruta_pdf)
-
-if not contexto_texto.strip():
-    st.warning("⚠️ Atención: El PDF seleccionado parece no contener texto legible (imagen escaneada).")
-
-SYSTEM_PROMPT = f"""
-OBJETIVO PRINCIPAL:
-Eres un simulador de estudiante diseñado para que el usuario (el alumnado) aprenda explicándote conceptos teóricos (Efecto Protegé). Eres curioso, te esfuerzas por entender, pero tienes dudas y cometes errores conceptuales verosímiles que el usuario debe corregir argumentando con rigor científico.
-
-VARIABLES DE CONFIGURACIÓN:
-- Asignatura/Materia: {asignatura_seleccionada.replace('_', ' ')}
-- Tema de estudio: {tema_seleccionado.replace('.pdf', '').replace('_', ' ')}
-- Nivel de desafío cognitivo de tus errores: {nivel_desafio}
-- Idioma de interacción: {idioma}
-
-MATERIAL DE REFERENCIA (BASE DE CONOCIMIENTO OCULTA):
-Utiliza la información del siguiente texto EXCLUSIVAMENTE para construir tu modelo mental y generar tus dudas. NUNCA reveles que estás leyendo un texto.
---- INICIO BASE DE CONOCIMIENTO ---
-""" + contexto_texto + """
---- FIN BASE DE CONOCIMIENTO ---
-
-REGLAS DE ORO (INQUEBRANTABLES):
-1. NUNCA proporciones la respuesta correcta ni una explicación completa. Tu rol es preguntar, dudar y pedir aclaraciones.
-2. NO rompas el personaje. Eres el estudiante, el usuario es tu profesor/a.
-3. Si el usuario se bloquea o utiliza lenguaje demasiado técnico, pídele que lo explique con palabras más sencillas, con un ejemplo cotidiano o paso a paso.
-4. NUNCA MENCIONES "LOS APUNTES", "EL TEXTO", "EL LIBRO" O "HE LEÍDO QUE...". Formula tus preguntas y confusiones desde tu propia cabeza (ej: "Yo pensaba que...", "Me imaginaba que..."). Está TERMINANTEMENTE PROHIBIDO citar literalmente la base de conocimiento. Debes procesar la información y expresarla con tus propias palabras de estudiante.
-5. Si el usuario intenta que le des directamente la respuesta, responde: "Creo que así no aprendería bien. Prefiero que me lo expliques tú paso a paso."
-6. Si parece que el usuario está repitiendo una definición de memoria, responde: "Me suena un poco a definición de libro de texto. ¿Podrías explicármelo con tus propias palabras o con un ejemplo de la vida real?"
-7. NUNCA hagas preguntas cerradas que se puedan responder con "Sí" o "No". Formula SIEMPRE preguntas abiertas (¿Cómo...?, ¿Por qué...?, ¿Qué pasaría si...?) que exijan argumentación.
-8. No inventes información. Si el usuario te habla de algo fuera de tu base de conocimiento, dile: "Eso no me suena de nada de lo que comentamos en clase, ¿me lo puedes explicar desde cero?"
-
-CONTROL DE ROL (AUTOCOMPROBACIÓN):
-Antes de responder, verifica internamente: ¿Estoy actuando como estudiante? ¿Estoy dando una explicación completa? ¿Estoy citando texto literal? Si detectas que estás empezando a explicar o a citar como una enciclopedia, DETENTE y reformula como duda personal. Tu función es aprender, no enseñar ni leer apuntes.
-
-DINÁMICA DE INTERACCIÓN:
-- Haz SOLO UNA intervención por turno.
-- Formato obligatorio: Máximo 2–3 frases. Solo una duda principal. No hagas listas de preguntas.
-- PREVENCIÓN DE BUCLES: NO repitas la misma pregunta si el usuario no logra aclarar tu duda en su turno. Si se atasca, cambia de estrategia: pídele una analogía, plantéale un caso práctico distinto o divide tu duda en partes más pequeñas.
-- Después de cada explicación del usuario: Resume brevemente lo que entendiste (1 frase) y formula tu nueva duda o error conceptual.
-
-GESTIÓN DE ERRORES DEL USUARIO Y CONFLICTO COGNITIVO:
-Fase A — Conflicto cognitivo: Si detectas un error conceptual: "Espera, me estoy liando. Yo me había hecho a la idea de que [tu concepción errónea o incompleta explicada con tus propias palabras infantiles/juveniles], pero tú me dices que [explicación del usuario]. ¿Cómo encaja eso?"
-Fase B — Límite de persistencia: Si el usuario insiste en el error: "Uf, sigo sin verlo claro. Como no quiero liarme más, ¿lo dejamos marcado con un asterisco para revisarlo luego con el profe y seguimos con otro concepto?" (Memoriza este evento para las alertas de repaso).
-
-VERIFICACIÓN DE COMPRENSIÓN REAL:
-Si la explicación parece memorizada, genérica o sin ejemplos, pide: un ejemplo inventado, una analogía, o explicar qué ocurre si cambia una variable. No avances hasta que el usuario reformule con sus propias palabras.
-
-PROGRESIÓN COGNITIVA:
-Sigue este orden: 1. Comprensión literal -> 2. Relación conceptual -> 3. Aplicación -> 4. Transferencia -> 5. Contraargumentación. No repitas el mismo error consecutivamente.
-
-GENERACIÓN DE ERRORES VEROSÍMILES:
-Tipos de error: Confusión de términos, Generalización excesiva, Relación causal incorrecta, Interpretación literal, Simplificación excesiva.
-
-MEMORIA DEL CONCEPTO ACTIVO:
-Identifica siempre el concepto activo. No cambies de concepto tú solo. Si el usuario cambia, pregunta si seguimos o cambiamos.
-
-BUCLE DE ITERACIÓN:
-Tras la progresión: "Creo que esta parte ya la tengo más clara. ¿Repasamos otro concepto o pasamos a las preguntas de evaluación del profe?"
-Si sigue -> reinicia progresión. Si escribe /FIN_DIALOGO -> inicia cierre.
-
-CIERRE METACOGNITIVO Y EVALUACIÓN (Solo si el usuario quiere terminar):
-Paso 1: "En resumen, entendí que [resumen]. Me ayudó cuando me corregiste sobre [error]." Haz las 3 preguntas metacognitivas UNA A UNA.
-Paso 2: Informe docente (solo evidencias). Alertas de repaso (si hubo Fase B). Rúbrica formativa (Criterio | Nivel | Evidencia literal).
-Paso 3: Despedida pidiendo que copie la rúbrica y la suba al aula virtual (Aules/Teams).
-"""
-
-# ==========================================
-# INTERFAZ DE CHAT (ALUMNADO)
-# ==========================================
-st.title("🌱 Simulador: Tu alumno virtual")
-st.caption(f"Actualmente repasando: **{asignatura_seleccionada.replace('_', ' ')} ➔ {tema_seleccionado.replace('.pdf', '').replace('_', ' ')}**")
+    api_key = st.sidebar.text_input("🔑 API Key de Gemini", type="password")
 
 if not api_key:
     st.stop()
 
-# INSTANCIACIÓN DEL NUEVO CLIENTE (Librería google-genai oficial)
-client = genai.Client(api_key=api_key)
+# Configuración global de la librería clásica
+genai.configure(api_key=api_key)
+
+# ==========================================
+# PANEL LATERAL Y CONTROLES DE SESIÓN
+# ==========================================
+with st.sidebar:
+    st.header("📚 Menú de Estudio")
+    asignaturas = get_asignaturas("apuntes")
+    if not asignaturas:
+        st.error("⚠️ Docente: Configura las carpetas en GitHub."); st.stop()
+    asignatura_seleccionada = st.selectbox("1. Tu Asignatura / Grupo:", asignaturas, format_func=lambda x: x.replace("_", " "))
+    temas = get_temas(asignatura_seleccionada)
+    if not temas:
+        st.warning(f"⚠️ No hay PDFs en {asignatura_seleccionada}."); st.stop()
+    tema_seleccionado = st.selectbox("2. Tema a repasar:", temas, format_func=lambda x: x.replace(".pdf", "").replace("_", " "))
+    st.divider()
+    idioma = st.selectbox("3. Idioma:", ["Castellano", "Valenciano"])
+    nivel_desafio = st.select_slider("4. Dificultad de dudas:", options=["Básico", "Intermedio", "Avanzado"], value="Intermedio")
+    
+    st.divider()
+    st.header("⚙️ Control de Sesión")
+    
+    if st.button("🧹 Reiniciar Conversación", use_container_width=True):
+        st.session_state.messages = []; st.rerun()
+    
+    if st.session_state.get('fase_actual') == 'explicacion' and len(st.session_state.get('messages', [])) > 2:
+        st.markdown("<br>", unsafe_allow_html=True) 
+        if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True, help="Termina la explicación y pasa a la metacognición"):
+            mostrar_instrucciones_finales()
+
+# ==========================================
+# CONTEXTO Y PROMPT MAESTRO
+# ==========================================
+ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
+contexto_texto = extract_text_from_pdf(ruta_pdf)
+concepciones_ocultas = get_concepciones_erroneas(ruta_pdf)
+
+bloque_concepciones = ""
+bloque_evaluacion_concepciones = ""
+if concepciones_ocultas.strip():
+    bloque_concepciones = f'ESTRATEGIA PEDAGÓGICA: Adopta estos errores como propios de forma natural: "{concepciones_ocultas}"'
+    bloque_evaluacion_concepciones = "- Desmontaje de Errores: Valora si el usuario detectó y corrigió tus ideas previas. Incluye una CITA LITERAL del usuario."
+
+SYSTEM_PROMPT = f"""
+Eres un simulador de estudiante (Efecto Protegé). El usuario es tu profesor.
+- Materia: {asignatura_seleccionada} | Tema: {tema_seleccionado} | Nivel: {nivel_desafio} | Idioma: {idioma}
+- Base de conocimiento: {contexto_texto}
+{bloque_concepciones}
+
+REGLAS GENERALES:
+1. Nunca des la respuesta correcta. Pregunta y duda.
+2. Si el usuario copia del libro, pide ejemplos reales.
+3. No menciones el PDF ni los apuntes.
+4. Mantén el rol de estudiante curioso.
+
+FASES DE CIERRE (MUY IMPORTANTE):
+
+FASE 1: METACOGNICIÓN (Se activa SOLO cuando recibes el comando oculto "/INICIAR_CIERRE"):
+1. Haz un breve resumen de lo que has entendido hoy gracias al usuario.
+2. Inicia la fase de metacognición haciendo la PRIMERA de 3 preguntas para que el usuario (tu profe) reflexione sobre su forma de explicar (ej. "¿Qué parte crees que me ha costado más entender?", "¿Qué cambiarías si me lo tuvieras que explicar mañana?").
+3. Espera a que el usuario responda en su turno. Luego haz la segunda pregunta, y luego la tercera. NO GENERES LA RÚBRICA AÚN.
+
+FASE 2: EVALUACIÓN (Se activa SOLO cuando recibes el comando oculto "/GENERAR_RUBRICA"):
+Genera la Rúbrica Formativa (Criterio | Nivel de Logro | Evidencia literal). {bloque_evaluacion_concepciones}
+
+[REGLA DE ORO PARA EVIDENCIAS LITERALES - OBLIGATORIO]: 
+- Las evidencias de la rúbrica DEBEN SER EXCLUSIVAMENTE FRASES ESCRITAS POR EL USUARIO. 
+- ESTÁ ESTRICTAMENTE PROHIBIDO citar tus propios textos (los del estudiante virtual). 
+- Busca en el historial lo que te ha escrito el usuario y cópialo literalmente entre comillas. 
+- Si no hay una frase del usuario que sirva de evidencia para un criterio concreto, pon obligatoriamente: "Sin evidencia directa en el texto del alumno".
+
+Despídete y da por terminada la sesión.
+"""
+
+# ==========================================
+# INTERFAZ DE CHAT CENTRAL
+# ==========================================
+st.title("🌱 Simulador: Tu alumno virtual")
+st.caption(f"Repasando: **{tema_seleccionado.replace('.pdf', '')}**")
 
 init_chat_history(asignatura_seleccionada, tema_seleccionado)
 
-# 1. Mostrar historial de mensajes
+# 1. Mostrar Historial
 for msg in st.session_state.messages:
     if msg.get("show", True):
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "model" else "🧑‍🏫"):
             st.markdown(msg["content"])
 
-# 2. BOTONES DE INICIO (Solo visibles al arrancar la sesión, DUA)
+# 2. Inicio DUA
 if len(st.session_state.messages) == 2:
-    st.markdown("<br>", unsafe_allow_html=True)
     col_btn1, col_btn2 = st.columns(2)
-    
     with col_btn1:
-        if st.button("📖 ¿Cómo funciona esta actividad?", use_container_width=True):
-            st.session_state.mostrar_instrucciones = True
-            
+        if st.button("📖 ¿Cómo funciona?", use_container_width=True): st.session_state.mostrar_instrucciones = True
     with col_btn2:
-        if st.button("🚀 Empezar directamente a explicar", type="primary", use_container_width=True):
-            st.session_state.mostrar_instrucciones = False
-
+        if st.button("🚀 Empezar a explicar", type="primary", use_container_width=True): st.session_state.mostrar_instrucciones = False
     if st.session_state.get("mostrar_instrucciones", False):
         st.info("""
-        **Instrucciones del Simulador (Efecto Protegé):**
-        1. **Cambio de roles:** Aquí tú eres el/la docente y el simulador es tu estudiante.
-        2. **Tu objetivo:** Tienes que conseguir que el estudiante entienda el concepto. Él te hará preguntas y a veces se equivocará a propósito.
-        3. **Cómo interactuar:** Usa la caja de texto de abajo para explicar, poner ejemplos y corregir sus fallos. ¡No le des la respuesta directa, hazle pensar!
-        4. **Finalizar y Evaluar:** Cuando consideres que la sesión ha terminado, pulsa el botón **'🏁 Terminar y Evaluar'** para generar tu nota y resumen.
-        
-        *Escribe tu primer mensaje en la caja de abajo cuando estés listo/a.*
+        **Tu objetivo:** Explica los conceptos a tu alumno virtual respondiendo a sus dudas. Él cometerá errores para que tú tengas que argumentar científicamente.
+        *💡 Consejo: Cuando consideres que la explicación ha terminado, abre el menú lateral izquierdo (>) y pulsa 'Iniciar Cierre y Reflexión'.*
         """)
 
-# 3. BOTÓN DE TERMINAR (Oculto al inicio para evitar confusiones)
-if len(st.session_state.messages) > 2:
-    col1, col2 = st.columns([1, 4])
+# 3. CONTROLES CENTRALES (Fase Metacognitiva)
+if st.session_state.fase_actual == 'metacognicion':
+    st.info("⚠️ Estás en la fase de reflexión. Responde a las preguntas de tu alumno en el chat de abajo.")
+    col1, col2 = st.columns([1, 3])
     with col1:
-        if st.button("🏁 Terminar y Evaluar", help="Pasa a la rúbrica final"):
-            prompt_rapido = "/FIN_DIALOGO"
-            st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": True})
-            with st.chat_message("user", avatar="🧑‍🏫"):
-                st.markdown(prompt_rapido)
-            
-            with st.chat_message("model", avatar="🧑‍🎓"):
-                with st.spinner("Preparando evaluación..."):
-                    try:
-                        # Adaptación estricta al nuevo formato de historial y roles
-                        formatted_history = [
-                            types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
-                            for m in st.session_state.messages[:-1]
-                        ]
-                        
-                        chat = client.chats.create(
-                            model="gemini-2.5-flash",
-                            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-                            history=formatted_history
-                        )
-                        response = chat.send_message(prompt_rapido)
-                        
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                        st.rerun() 
-                    except Exception as e:
-                        print(f"ERROR TÉCNICO DE API: {e}") 
-                        st.error("⚠️ El servidor está un poco saturado. Por favor, espera unos segundos y vuelve a pulsar el botón.")
-                        st.session_state.messages.pop() 
+        if st.button("📄 Generar Rúbrica Final", type="primary", help="Cierra el chat y evalúa"):
+            st.session_state.trigger_rubrica = True
+            st.rerun()
 
-# 4. ENTRADA PRINCIPAL DE CHAT
-if prompt := st.chat_input("Escribe tu explicación aquí..."):
-    # Al escribir, la interfaz se limpia automáticamente de los botones iniciales
-    st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
-    with st.chat_message("user", avatar="🧑‍🏫"):
-        st.markdown(prompt)
-
+# 4. PROCESAMIENTO DE TRIGGERS CON REINTENTOS BLINDADOS
+if st.session_state.get('trigger_cierre', False):
+    st.session_state.trigger_cierre = False
+    st.session_state.fase_actual = 'metacognicion'
+    prompt_rapido = "/INICIAR_CIERRE"
+    st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": False})
     with st.chat_message("model", avatar="🧑‍🎓"):
-        with st.spinner("Pensando..."):
+        with st.spinner("Preparando el resumen y las preguntas..."):
             try:
-                # Adaptación estricta al nuevo formato de historial y roles
-                formatted_history = [
-                    types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])])
-                    for m in st.session_state.messages[:-1]
-                ]
-                
-                chat = client.chats.create(
-                    model="gemini-2.5-flash",
-                    config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT),
-                    history=formatted_history
-                )
-                response = chat.send_message(prompt)
-                
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
+                texto_respuesta = enviar_mensaje_con_reintentos(prompt_rapido, st.session_state.messages[:-1], SYSTEM_PROMPT)
+                st.markdown(texto_respuesta)
+                st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
                 st.rerun() 
             except Exception as e:
-                print(f"ERROR TÉCNICO DE API: {e}") 
-                st.error("⚠️ Ha habido un microcorte de conexión con el servidor. Por favor, vuelve a enviar tu explicación.")
+                # CHIVATO DE ERRORES: Ahora muestra exactamente por qué falla
+                st.error(f"⚠️ Detalle técnico: {str(e)}")
                 st.session_state.messages.pop()
+                st.session_state.fase_actual = 'explicacion' 
+
+if st.session_state.get('trigger_rubrica', False):
+    st.session_state.trigger_rubrica = False
+    st.session_state.fase_actual = 'rubrica'
+    prompt_rapido = "/GENERAR_RUBRICA"
+    st.session_state.messages.append({"role": "user", "content": prompt_rapido, "show": False})
+    with st.chat_message("model", avatar="🧑‍🎓"):
+        with st.spinner("Evaluando evidencias y generando rúbrica..."):
+            try:
+                texto_respuesta = enviar_mensaje_con_reintentos(prompt_rapido, st.session_state.messages[:-1], SYSTEM_PROMPT)
+                st.session_state.texto_rubrica_final = texto_respuesta 
+                st.markdown(texto_respuesta)
+                st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
+                st.rerun() 
+            except Exception as e:
+                # CHIVATO DE ERRORES
+                st.error(f"⚠️ Detalle técnico: {str(e)}")
+                st.session_state.messages.pop()
+                st.session_state.fase_actual = 'metacognicion' 
+
+# 5. BOTÓN DE DESCARGA FINAL
+if st.session_state.fase_actual == 'rubrica':
+    st.success("🎉 Actividad finalizada. Descarga tu rúbrica y súbela a Aules/Teams.")
+    texto_rubrica_documento = st.session_state.get("texto_rubrica_final", "Error al cargar la rúbrica.")
+    ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica_documento}"
+    st.download_button(label="📥 Descargar rúbrica", data=documento, file_name=f"Rubrica_{datetime.datetime.now().strftime('%d%m%Y')}.md", mime="text/markdown", type="primary")
+
+# 6. ENTRADA DE CHAT NORMAL CON REINTENTOS BLINDADOS
+if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
+    placeholder = "Responde a tu alumno aquí..." if st.session_state.fase_actual == 'metacognicion' else "Explica aquí..."
+    if prompt := st.chat_input(placeholder):
+        st.session_state.messages.append({"role": "user", "content": prompt, "show": True})
+        with st.chat_message("user", avatar="🧑‍🏫"): st.markdown(prompt)
+        with st.chat_message("model", avatar="🧑‍🎓"):
+            with st.spinner("Pensando..."):
+                try:
+                    texto_respuesta = enviar_mensaje_con_reintentos(prompt, st.session_state.messages[:-1], SYSTEM_PROMPT)
+                    st.markdown(texto_respuesta)
+                    st.session_state.messages.append({"role": "model", "content": texto_respuesta, "show": True})
+                    st.rerun()
+                except Exception as e:
+                    # CHIVATO DE ERRORES: Imprescindible para no ir a ciegas
+                    st.error(f"⚠️ Detalle técnico: {str(e)}")
+                    st.session_state.messages.pop()
