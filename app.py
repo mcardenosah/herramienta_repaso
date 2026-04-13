@@ -9,9 +9,9 @@ import time
 # ==========================================
 # CONFIGURACIÓN GENERAL DE LA IA
 # ==========================================
-# Usamos la versión de producción exacta (-002) para evitar errores 404 
-# y garantizar el límite gratuito de 1.500 peticiones al día.
-MODELO_IA = "gemini-1.5-flash-002"
+# Usamos el modelo 2.0 estable: evita el error 404 de los modelos 1.5 
+# y garantiza la cuota gratuita de 1.500 peticiones al día.
+MODELO_IA = "gemini-2.0-flash"
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
