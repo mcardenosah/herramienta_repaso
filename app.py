@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 import PyPDF2
 import datetime
+import time
 
 # ==========================================
 # CONFIGURACIÓN DE LA PÁGINA
@@ -16,7 +17,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# FUNCIONES AUXILIARES DE ARCHIVOS
+# FUNCIONES AUXILIARES Y DE RED
 # ==========================================
 def extract_text_from_pdf(filepath):
     """Extrae el texto de un archivo PDF dado su ruta."""
@@ -60,6 +61,30 @@ def get_temas(asignatura, directory="apuntes"):
     pdfs = [f for f in os.listdir(path) if f.endswith('.pdf')]
     return sorted(pdfs)
 
+def enviar_mensaje_con_reintentos(client, prompt_text, history, system_prompt):
+    """
+    AMORTIGUADOR DE ERRORES ABSOLUTO (Exponential Backoff).
+    Atrapa cualquier fallo de la API de Google y reintenta de forma silenciosa.
+    """
+    max_intentos = 4
+    ultimo_error = None
+    
+    for intento in range(max_intentos):
+        try:
+            chat = client.chats.create(
+                model="gemini-2.0-flash", # CAMBIO CRÍTICO: Bajada a la versión estable 2.0
+                config=types.GenerateContentConfig(system_instruction=system_prompt),
+                history=history
+            )
+            response = chat.send_message(prompt_text)
+            return response
+        except Exception as e:
+            ultimo_error = e
+            if intento < max_intentos - 1:
+                time.sleep(2 ** intento)  # Espera 1s, luego 2s, luego 4s...
+            else:
+                raise ultimo_error # Si después de 4 intentos sigue roto, lanza el error real.
+
 # ==========================================
 # DIÁLOGO DE INSTRUCCIONES FINALES
 # ==========================================
@@ -72,7 +97,6 @@ def mostrar_instrucciones_finales():
     2. **Responde** a esas preguntas utilizando la caja de chat (sigue abierta).
     3. Cuando hayas contestado, pulsa el botón **'📄 Generar Rúbrica Final'** que aparecerá en la pantalla.
     """)
-    # El botón "Entendido" ahora simplemente activa el "gatillo" para cambiar de fase
     if st.button("Entendido, empezar reflexión", type="primary", use_container_width=True):
         st.session_state.trigger_cierre = True
         st.rerun()
@@ -89,12 +113,12 @@ def init_chat_history(asignatura, tema):
         st.session_state.fase_actual = 'explicacion' # Estados: 'explicacion', 'metacognicion', 'rubrica'
         st.session_state.trigger_cierre = False
         st.session_state.trigger_rubrica = False
-        st.session_state.texto_rubrica_final = "" # Caja fuerte para el .md
+        st.session_state.texto_rubrica_final = "" 
     
     if len(st.session_state.messages) == 0:
         st.session_state.messages.append({"role": "user", "content": f"Inicio sesión: {tema}", "show": False})
         
-        # El alumno virtual toma la iniciativa y hace la primera pregunta de andamiaje general.
+        # El alumno virtual toma la iniciativa
         tema_limpio = tema.replace('.pdf', '').replace('_', ' ')
         st.session_state.messages.append({
             "role": "model", 
@@ -130,18 +154,16 @@ with st.sidebar:
     st.divider()
     st.header("⚙️ Control de Sesión")
     
-    # Botón de reinicio
     if st.button("🧹 Reiniciar Conversación", use_container_width=True):
         st.session_state.messages = []; st.rerun()
     
-    # Botón de Cierre movido al panel lateral (Solo visible tras interactuar)
     if st.session_state.get('fase_actual') == 'explicacion' and len(st.session_state.get('messages', [])) > 2:
-        st.markdown("<br>", unsafe_allow_html=True) # Pequeño espacio visual
+        st.markdown("<br>", unsafe_allow_html=True) 
         if st.button("🏁 Iniciar Cierre y Reflexión", type="primary", use_container_width=True, help="Termina la explicación y pasa a la metacognición"):
             mostrar_instrucciones_finales()
 
 # ==========================================
-# CONTEXTO Y PROMPT MAESTRO REESTRUCTURADO
+# CONTEXTO Y PROMPT MAESTRO
 # ==========================================
 ruta_pdf = os.path.join("apuntes", asignatura_seleccionada, tema_seleccionado)
 contexto_texto = extract_text_from_pdf(ruta_pdf)
@@ -200,7 +222,7 @@ for msg in st.session_state.messages:
         with st.chat_message(msg["role"], avatar="🧑‍🎓" if msg["role"] == "model" else "🧑‍🏫"):
             st.markdown(msg["content"])
 
-# 2. Inicio DUA (Instrucciones de arranque)
+# 2. Inicio DUA
 if len(st.session_state.messages) == 2:
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
@@ -210,7 +232,6 @@ if len(st.session_state.messages) == 2:
     if st.session_state.get("mostrar_instrucciones", False):
         st.info("""
         **Tu objetivo:** Explica los conceptos a tu alumno virtual respondiendo a sus dudas. Él cometerá errores para que tú tengas que argumentar científicamente.
-        
         *💡 Consejo: Cuando consideres que la explicación ha terminado, abre el menú lateral izquierdo (>) y pulsa 'Iniciar Cierre y Reflexión'.*
         """)
 
@@ -219,12 +240,11 @@ if st.session_state.fase_actual == 'metacognicion':
     st.info("⚠️ Estás en la fase de reflexión. Responde a las preguntas de tu alumno en el chat de abajo.")
     col1, col2 = st.columns([1, 3])
     with col1:
-        # Este botón SÍ se queda en el centro porque es el paso lógico tras escribir en el chat
         if st.button("📄 Generar Rúbrica Final", type="primary", help="Cierra el chat y evalúa"):
             st.session_state.trigger_rubrica = True
             st.rerun()
 
-# 4. PROCESAMIENTO DE TRIGGERS (Llamadas automáticas a la API)
+# 4. PROCESAMIENTO DE TRIGGERS CON REINTENTOS BLINDADOS
 if st.session_state.get('trigger_cierre', False):
     st.session_state.trigger_cierre = False
     st.session_state.fase_actual = 'metacognicion'
@@ -234,14 +254,14 @@ if st.session_state.get('trigger_cierre', False):
         with st.spinner("Preparando el resumen y las preguntas..."):
             try:
                 formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
-                chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
-                response = chat.send_message(prompt_rapido)
+                response = enviar_mensaje_con_reintentos(client, prompt_rapido, formatted_history, SYSTEM_PROMPT)
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                st.rerun() # Refresco de pantalla limpio
+                st.rerun() 
             except Exception as e:
                 print(f"ERROR DE API: {e}")
-                st.error("⚠️ Error de conexión. Reintenta.")
+                # AHORA IMPRIME EL ERROR EXACTO PARA PODER DEPURAR
+                st.error(f"⚠️ Error de la API de Google. Detalle técnico: {str(e)}")
                 st.session_state.messages.pop()
                 st.session_state.fase_actual = 'explicacion' 
 
@@ -254,31 +274,26 @@ if st.session_state.get('trigger_rubrica', False):
         with st.spinner("Evaluando evidencias y generando rúbrica..."):
             try:
                 formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
-                chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
-                response = chat.send_message(prompt_rapido)
-                
-                # GUARDADO BLINDADO DE LA RÚBRICA EN LA CAJA FUERTE
+                response = enviar_mensaje_con_reintentos(client, prompt_rapido, formatted_history, SYSTEM_PROMPT)
                 st.session_state.texto_rubrica_final = response.text 
-                
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
-                st.rerun() # Refresco de pantalla limpio para forzar la aparición del botón de descarga
+                st.rerun() 
             except Exception as e:
                 print(f"ERROR DE API: {e}")
-                st.error("⚠️ Error de conexión. Reintenta.")
+                st.error(f"⚠️ Error de la API de Google. Detalle técnico: {str(e)}")
                 st.session_state.messages.pop()
                 st.session_state.fase_actual = 'metacognicion' 
 
 # 5. BOTÓN DE DESCARGA FINAL
 if st.session_state.fase_actual == 'rubrica':
     st.success("🎉 Actividad finalizada. Descarga tu rúbrica y súbela a Aules/Teams.")
-    # Leemos exclusivamente de la "caja fuerte", garantizando que nunca estará vacío
     texto_rubrica_documento = st.session_state.get("texto_rubrica_final", "Error al cargar la rúbrica.")
     ahora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     documento = f"INFORME DE EVALUACIÓN - {tema_seleccionado}\nFECHA: {ahora}\n\n{texto_rubrica_documento}"
     st.download_button(label="📥 Descargar rúbrica", data=documento, file_name=f"Rubrica_{datetime.datetime.now().strftime('%d%m%Y')}.md", mime="text/markdown", type="primary")
 
-# 6. ENTRADA DE CHAT (Visible en Explicación y Metacognición)
+# 6. ENTRADA DE CHAT NORMAL CON REINTENTOS BLINDADOS
 if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
     placeholder = "Responde a tu alumno aquí..." if st.session_state.fase_actual == 'metacognicion' else "Explica aquí..."
     if prompt := st.chat_input(placeholder):
@@ -288,12 +303,12 @@ if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
             with st.spinner("Pensando..."):
                 try:
                     formatted_history = [types.Content(role=m["role"], parts=[types.Part.from_text(text=m["content"])]) for m in st.session_state.messages[:-1]]
-                    chat = client.chats.create(model="gemini-2.5-flash", config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT), history=formatted_history)
-                    response = chat.send_message(prompt)
+                    response = enviar_mensaje_con_reintentos(client, prompt, formatted_history, SYSTEM_PROMPT)
                     st.markdown(response.text)
                     st.session_state.messages.append({"role": "model", "content": response.text, "show": True})
                     st.rerun()
                 except Exception as e:
                     print(f"ERROR DE API: {e}")
-                    st.error("⚠️ Ha habido un microcorte de conexión. Por favor, vuelve a intentar enviar el mensaje.")
+                    # AHORA IMPRIME EL ERROR EXACTO PARA PODER DEPURAR
+                    st.error(f"⚠️ Fallo en el servidor. Detalle técnico: {str(e)}")
                     st.session_state.messages.pop()
