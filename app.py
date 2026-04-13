@@ -72,7 +72,7 @@ def enviar_mensaje_con_reintentos(client, prompt_text, history, system_prompt):
     for intento in range(max_intentos):
         try:
             chat = client.chats.create(
-                model="gemini-2.0-flash", # CAMBIO CRÍTICO: Bajada a la versión estable 2.0
+                model="gemini-1.5-flash", # CAMBIO CRÍTICO: Vuelta al modelo 1.5, que tiene la capa gratuita abierta
                 config=types.GenerateContentConfig(system_instruction=system_prompt),
                 history=history
             )
@@ -260,7 +260,6 @@ if st.session_state.get('trigger_cierre', False):
                 st.rerun() 
             except Exception as e:
                 print(f"ERROR DE API: {e}")
-                # AHORA IMPRIME EL ERROR EXACTO PARA PODER DEPURAR
                 st.error(f"⚠️ Error de la API de Google. Detalle técnico: {str(e)}")
                 st.session_state.messages.pop()
                 st.session_state.fase_actual = 'explicacion' 
@@ -309,6 +308,5 @@ if st.session_state.fase_actual in ['explicacion', 'metacognicion']:
                     st.rerun()
                 except Exception as e:
                     print(f"ERROR DE API: {e}")
-                    # AHORA IMPRIME EL ERROR EXACTO PARA PODER DEPURAR
                     st.error(f"⚠️ Fallo en el servidor. Detalle técnico: {str(e)}")
                     st.session_state.messages.pop()
